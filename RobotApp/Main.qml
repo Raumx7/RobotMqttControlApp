@@ -7,7 +7,7 @@ ApplicationWindow {
     visible: true
     width: 1000
     height: 640
-    title: "Panel Táctil - Robot Control"
+    title: "Touch Panel - Robot Control"
 
     background: Rectangle { color: "#141419" }
 
@@ -169,7 +169,7 @@ ApplicationWindow {
                 spacing: 12
 
                 Text {
-                    text: "Comandos"
+                    text: "Commands"
                     color: "#00adb5"
                     font.pixelSize: 18
                     font.bold: true
@@ -182,35 +182,35 @@ ApplicationWindow {
                     columnSpacing: 12
 
                     Button {
-                        text: "Adelante"
+                        text: "Forward"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
                         onClicked: backend.send_command("A 0 100")
                     }
 
                     Button {
-                        text: "Atrás"
+                        text: "Backward"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
                         onClicked: backend.send_command("A 0 -100")
                     }
 
                     Button {
-                        text: "Izquierda"
+                        text: "Left"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
                         onClicked: backend.send_command("A -100 0")
                     }
 
                     Button {
-                        text: "Derecha"
+                        text: "Right"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
                         onClicked: backend.send_command("A 100 0")
                     }
 
                     Button {
-                        text: "Detener"
+                        text: "Stop"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
                         highlighted: true
@@ -218,10 +218,10 @@ ApplicationWindow {
                     }
 
                     Button {
-                        text: "Cuadrada"
+                        text: "Square"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
-                        onClicked: backend.send_command("S 70 2000 800")
+                        onClicked: backend.send_command("S 100 2000 1000")
                     }
                 }
             }
@@ -244,7 +244,7 @@ ApplicationWindow {
                 spacing: 8
 
                 Text {
-                    text: "Respuesta del robot (raw)"
+                    text: "Robot response (raw)"
                     color: "#00adb5"
                     font.pixelSize: 14
                     font.bold: true
