@@ -6,20 +6,20 @@ ApplicationWindow {
     id: window
     visible: true
     width: 1000
-    height: 640
-    title: "Touch Panel - Robot Control"
+    height: 720
+    title: "Touch panel - Robot Control"
 
     background: Rectangle { color: "#141419" }
 
     // ============================================================
-    // Columna izquierda: joystick + botones
+    // Layout principal
     // ============================================================
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
-        spacing: 15
+        spacing: 12
 
-        // --- Barra superior con estado de conexión ---
+        // ---------- Barra superior ----------
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
@@ -32,7 +32,7 @@ ApplicationWindow {
             }
 
             Text {
-                text: backend.connected ? "Conectado al broker" : "Desconectado"
+                text: backend.connected ? "Connected to broker" : "Disconnected"
                 color: "white"
                 font.pixelSize: 14
             }
@@ -47,7 +47,67 @@ ApplicationWindow {
             }
         }
 
-        // --- Área principal: joystick a la izquierda, botones a la derecha ---
+        // ---------- Estado actual del robot ----------
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 60
+            color: "#1b1b22"
+            border.color: "#393e46"
+            border.width: 1
+            radius: 8
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 24
+
+                Text {
+                    text: "State:"
+                    color: "#00adb5"
+                    font.pixelSize: 14
+                    font.bold: true
+                }
+
+                Text {
+                    text: "L: " + backend.leftPower
+                    color: "white"
+                    font.pixelSize: 14
+                }
+
+                Text {
+                    text: "R: " + backend.rightPower
+                    color: "white"
+                    font.pixelSize: 14
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                    text: "Brake mode:"
+                    color: "#00adb5"
+                    font.pixelSize: 14
+                    font.bold: true
+                }
+
+                Rectangle {
+                    width: 90
+                    height: 26
+                    radius: 13
+                    color: backend.brakeMode === "brake" ? "#f44336" : "#4caf50"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: backend.brakeMode === "brake" ? "BRAKE" : "COAST"
+                        color: "white"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+            }
+        }
+
+        // ---------- Área central: joystick + comandos ----------
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -77,8 +137,6 @@ ApplicationWindow {
 
                     property real outputX: 0
                     property real outputY: 0
-
-                    // Valor anterior publicado (para evitar spam)
                     property int lastSentX: 0
                     property int lastSentY: 0
 
@@ -124,7 +182,6 @@ ApplicationWindow {
                                 joystickBase.outputY = -(dy / maxDistance) * 100;
                             }
 
-                            // Redondeo a enteros
                             const xi = Math.round(joystickBase.outputX);
                             const yi = Math.round(joystickBase.outputY);
 
@@ -145,7 +202,6 @@ ApplicationWindow {
 
                             joystickBase.outputX = 0;
                             joystickBase.outputY = 0;
-
                             joystickBase.lastSentX = 0;
                             joystickBase.lastSentY = 0;
 
@@ -163,10 +219,10 @@ ApplicationWindow {
                 }
             }
 
-            // ---------- Botones de comandos ----------
+            // ---------- Botones de comando ----------
             ColumnLayout {
                 Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                spacing: 12
+                spacing: 15
 
                 Text {
                     text: "Commands"
@@ -218,18 +274,49 @@ ApplicationWindow {
                     }
 
                     Button {
-                        text: "Square"
+                        text: "Auton-Square"
                         Layout.preferredWidth: 130
                         Layout.preferredHeight: 50
-                        onClicked: backend.send_command("S 100 2000 1000")
+                        onClicked: backend.send_command("S 100 2000 800")
+                    }
+                }
+
+                // ---------- Modo de freno ----------
+                Text {
+                    text: "Brake mode"
+                    color: "#00adb5"
+                    font.pixelSize: 14
+                    font.bold: true
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: 10
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 12
+
+                    Button {
+                        text: "Coast"
+                        Layout.preferredWidth: 120
+                        Layout.preferredHeight: 45
+                        checkable: true
+                        checked: backend.brakeMode === "coast"
+                        onClicked: backend.set_brake_mode("coast")
+                    }
+
+                    Button {
+                        text: "Brake"
+                        Layout.preferredWidth: 120
+                        Layout.preferredHeight: 45
+                        checkable: true
+                        checked: backend.brakeMode === "brake"
+                        onClicked: backend.set_brake_mode("brake")
                     }
                 }
             }
         }
 
-        // ============================================================
-        // Panel de respuesta JSON
-        // ============================================================
+        // ---------- Panel de respuesta JSON ----------
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 180
@@ -243,11 +330,24 @@ ApplicationWindow {
                 anchors.margins: 12
                 spacing: 8
 
-                Text {
-                    text: "Robot response (raw)"
-                    color: "#00adb5"
-                    font.pixelSize: 14
-                    font.bold: true
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Robot response (raw)"
+                        color: "#00adb5"
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: "Clean"
+                        Layout.preferredWidth: 80
+                        Layout.preferredHeight: 28
+                        onClicked: backend.send_command("")  // no-op; ver nota abajo
+                    }
                 }
 
                 ScrollView {
