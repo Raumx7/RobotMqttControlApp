@@ -6,36 +6,45 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QObject, Slot, Signal, Property
 
-# --- Configuración MQTT ---
-MQTT_BROKER = "localhost"
-MQTT_PORT   = 1883
-MQTT_SUB    = "robot/response"
-MQTT_PUB    = "robot/command"
-CLIENT_ID   = "qt-robot-panel"
+# --- MQTT Configuration ---
+MQTT_BROKER   = "localhost"
+MQTT_PORT     = 1883
+MQTT_SUB_RESP = "robot/response"
+MQTT_SUB_STAT = "robot/status"
+MQTT_PUB      = "robot/command"
+CLIENT_ID     = "qt-robot-panel"
 
 
 class Backend(QObject):
-    connectionChanged    = Signal(bool)
-    lastResponseChanged  = Signal(str)
-    brakeModeChanged     = Signal(str)
-    moveValuesChanged    = Signal(int, int)
+    connectionChanged = Signal(bool)
+    responsesChanged  = Signal()
+
+    # Robot status signals (from robot/status topic)
+    leftChanged      = Signal(int)
+    rightChanged     = Signal(int)
+    modeChanged      = Signal(str)
+    brakeModeChanged = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._connected      = False
-        self._last_response  = ""
-        self._brake_mode     = "coast"
-        self._l_power        = 0
-        self._r_power        = 0
+        self._connected = False
 
-        # ⚠️ IMPORTANTE: crear los eventos de sincronización ANTES
-        # de lanzar cualquier hilo. Si el hilo arranca primero,
-        # accede a self._stop_event cuando todavía no existe.
+        # Last robot responses, newest first (one compact line each)
+        self._responses     = []
+        self._max_responses = 10
+
+        # Internal status
+        self._left       = 0
+        self._right      = 0
+        self._mode       = "manual"
+        self._brake_mode = "coast"
+
+        # Synchronization - MUST be created before starting threads
         self._stop_event      = threading.Event()
         self._publish_lock    = threading.Lock()
         self._pending_publish = None
 
-        # --- Cliente MQTT ---
+        # --- MQTT Client ---
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=CLIENT_ID,
@@ -45,45 +54,36 @@ class Backend(QObject):
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message    = self._on_message
 
-        # --- Hilos (después de tener todo inicializado) ---
+        # --- Threads ---
         self._publish_thread = threading.Thread(
-            target=self._publish_worker,
-            name="publish_worker",
-            daemon=True,
-        )
+            target=self._publish_worker, name="publish_worker", daemon=True)
         self._publish_thread.start()
 
         self._connection_thread = threading.Thread(
-            target=self._connection_loop,
-            name="connection_loop",
-            daemon=True,
-        )
+            target=self._connection_loop, name="connection_loop", daemon=True)
         self._connection_thread.start()
 
     # ------------------------------------------------------------------
-    # Reconexión automática
+    # Automatic reconnection
     # ------------------------------------------------------------------
 
     def _connection_loop(self):
         backoff = 1.0
         max_backoff = 30.0
-
         while not self._stop_event.is_set():
             if not self._client.is_connected():
                 try:
-                    print(f"[MQTT] Conectando a {MQTT_BROKER}:{MQTT_PORT}...")
+                    print(f"[MQTT] Connecting to {MQTT_BROKER}:{MQTT_PORT}...")
                     self._client.connect(MQTT_BROKER, MQTT_PORT, keepalive=30)
                     self._client.loop_start()
                     backoff = 1.0
                 except Exception as e:
-                    print(f"[MQTT] Error: {e}. Reintentando en {backoff:.1f}s")
+                    print(f"[MQTT] Error: {e}. Retrying in {backoff:.1f}s")
                     self._stop_event.wait(backoff)
                     backoff = min(backoff * 2.0, max_backoff)
-
             self._stop_event.wait(1.0)
 
     def stop(self):
-        """Cierre limpio: detiene hilos y desconecta del broker."""
         self._stop_event.set()
         try:
             self._client.loop_stop()
@@ -92,7 +92,7 @@ class Backend(QObject):
             pass
 
     # ------------------------------------------------------------------
-    # Publicación asíncrona
+    # Async publishing
     # ------------------------------------------------------------------
 
     def _publish_worker(self):
@@ -100,12 +100,11 @@ class Backend(QObject):
             with self._publish_lock:
                 payload = self._pending_publish
                 self._pending_publish = None
-
             if payload is not None:
                 try:
                     self._client.publish(MQTT_PUB, payload)
                 except Exception as e:
-                    print(f"[MQTT] Error al publicar: {e}")
+                    print(f"[MQTT] Publish error: {e}")
             else:
                 self._stop_event.wait(0.05)
 
@@ -114,22 +113,23 @@ class Backend(QObject):
             self._pending_publish = payload
 
     # ------------------------------------------------------------------
-    # Callbacks MQTT
+    # MQTT Callbacks
     # ------------------------------------------------------------------
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
-            print("[MQTT] Conectado al broker")
-            client.subscribe(MQTT_SUB)
+            print("[MQTT] Connected to broker")
+            client.subscribe(MQTT_SUB_RESP)
+            client.subscribe(MQTT_SUB_STAT)
             self._connected = True
             self.connectionChanged.emit(True)
         else:
-            print(f"[MQTT] Fallo de conexión, rc={rc}")
+            print(f"[MQTT] Connection failed, rc={rc}")
             self._connected = False
             self.connectionChanged.emit(False)
 
     def _on_disconnect(self, client, userdata, flags, rc, properties=None):
-        print("[MQTT] Desconectado")
+        print("[MQTT] Disconnected")
         self._connected = False
         self.connectionChanged.emit(False)
 
@@ -139,54 +139,81 @@ class Backend(QObject):
         except Exception:
             payload = "<decode error>"
 
-        # Intentar parsear como JSON
-        parsed = None
+        # Tolerant parsing
         try:
             parsed = json.loads(payload)
-            pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
         except Exception:
-            pretty = payload
+            parsed = None
 
-        # Actualizar estado interno si el JSON tiene los campos esperados
-        if isinstance(parsed, dict):
-            if "b" in parsed:
-                self._brake_mode = str(parsed["b"])
-                self.brakeModeChanged.emit(self._brake_mode)
+        if msg.topic == MQTT_SUB_STAT and isinstance(parsed, dict):
+            self._handle_status(parsed)
+        elif msg.topic == MQTT_SUB_RESP:
+            self._handle_response(payload, parsed)
 
-            l = parsed.get("l")
-            r = parsed.get("r")
-            if isinstance(l, int) and isinstance(r, int):
-                self._l_power = l
-                self._r_power = r
-                self.moveValuesChanged.emit(l, r)
+    def _handle_status(self, obj: dict):
+        # left / right
+        l = obj.get("left")
+        r = obj.get("right")
+        if isinstance(l, int) and l != self._left:
+            self._left = l
+            self.leftChanged.emit(l)
+        if isinstance(r, int) and r != self._right:
+            self._right = r
+            self.rightChanged.emit(r)
 
-        self._last_response = pretty
-        print(f"[MQTT] {msg.topic}: {pretty}")
-        self.lastResponseChanged.emit(pretty)
+        # mode
+        m = obj.get("mode")
+        if isinstance(m, str) and m != self._mode:
+            self._mode = m
+            self.modeChanged.emit(m)
+
+        # brake_mode
+        b = obj.get("brake_mode")
+        if isinstance(b, str) and b != self._brake_mode:
+            self._brake_mode = b
+            self.brakeModeChanged.emit(b)
+
+    def _handle_response(self, raw: str, parsed):
+        # Keep each response on a single line so the log never needs scrolling
+        if parsed is not None:
+            line = json.dumps(parsed, ensure_ascii=False)
+        else:
+            line = " ".join(raw.split())
+
+        print(f"[MQTT] response: {line}")
+
+        # Newest first, keep only the last N responses
+        self._responses.insert(0, line)
+        del self._responses[self._max_responses:]
+        self.responsesChanged.emit()
 
     # ------------------------------------------------------------------
-    # Propiedades QML
+    # QML Properties
     # ------------------------------------------------------------------
 
     @Property(bool, notify=connectionChanged)
     def connected(self):
         return self._connected
 
-    @Property(str, notify=lastResponseChanged)
-    def lastResponse(self):
-        return self._last_response
+    @Property(list, notify=responsesChanged)
+    def lastResponses(self):
+        return list(self._responses)
+
+    @Property(int, notify=leftChanged)
+    def leftPower(self):
+        return self._left
+
+    @Property(int, notify=rightChanged)
+    def rightPower(self):
+        return self._right
+
+    @Property(str, notify=modeChanged)
+    def mode(self):
+        return self._mode
 
     @Property(str, notify=brakeModeChanged)
     def brakeMode(self):
         return self._brake_mode
-
-    @Property(int, notify=moveValuesChanged)
-    def leftPower(self):
-        return self._l_power
-
-    @Property(int, notify=moveValuesChanged)
-    def rightPower(self):
-        return self._r_power
 
     # ------------------------------------------------------------------
     # Slots
@@ -215,10 +242,15 @@ class Backend(QObject):
         elif mode == "coast":
             cmd = "B 0"
         else:
-            print(f"[TX] Modo de freno desconocido: {mode}")
+            print(f"[TX] Unknown brake mode: {mode}")
             return
         print(f"[TX] {cmd}")
         self._enqueue(cmd)
+
+    @Slot()
+    def clear_response(self):
+        self._responses.clear()
+        self.responsesChanged.emit()
 
 
 if __name__ == "__main__":
@@ -233,9 +265,7 @@ if __name__ == "__main__":
     if not engine.rootObjects():
         sys.exit(-1)
 
-    # Mantener referencia viva mientras la app corre
     app.backend = backend
-
     exit_code = app.exec()
     backend.stop()
     sys.exit(exit_code)
