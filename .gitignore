@@ -82,3 +82,19 @@ CMakeLists.txt.user*
 .uic/
 /build*/
 /.qtcreator/
+
+# Python virtual envs
+venv/
+.venv/
+env/
+
+# Python Caché
+__pycache__/
+
+# vscode config (Windows/Linux)
+.vscode/
+
+# Temp OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
