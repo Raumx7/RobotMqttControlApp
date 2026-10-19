@@ -1,7 +1,21 @@
+import os
 import sys
 import json
 import threading
 import paho.mqtt.client as mqtt
+
+# --- Configuración e importación de PySide6 ---
+import PySide6
+
+pyside_dir = os.path.dirname(PySide6.__file__)
+if hasattr(os, "add_dll_directory"):
+    # Registrar la raíz de PySide6 y carpetas nativas de Qt para Windows
+    os.add_dll_directory(pyside_dir)
+    for folder in ["Qt/bin", "Qt/plugins", "qml"]:
+        path = os.path.join(pyside_dir, folder)
+        if os.path.exists(path):
+            os.add_dll_directory(path)
+
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QObject, Slot, Signal, Property
@@ -253,9 +267,20 @@ class Backend(QObject):
         self.responsesChanged.emit()
 
 
+# ------------------------------------------------------------------
+# Entry Point
+# ------------------------------------------------------------------
+
 if __name__ == "__main__":
+    # Asegurar la variable de entorno y las rutas para plugins de QML
+    qml_import_path = os.path.join(pyside_dir, "qml")
+    os.environ["QML2_IMPORT_PATH"] = qml_import_path
+
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()
+
+    # Indicar explícitamente a QML dónde buscar los componentes nativos
+    engine.addImportPath(qml_import_path)
 
     backend = Backend()
     engine.rootContext().setContextProperty("backend", backend)
