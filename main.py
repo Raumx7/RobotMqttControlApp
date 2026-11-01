@@ -1,15 +1,16 @@
 import os
 import sys
 import json
+import math
 import threading
 import paho.mqtt.client as mqtt
-
-# --- Configuración e importación de PySide6 ---
 import PySide6
 
+# --- OS compatibility (Windows) ---
+# Must run BEFORE importing any PySide6 submodule so the Qt DLLs can be found.
 pyside_dir = os.path.dirname(PySide6.__file__)
 if hasattr(os, "add_dll_directory"):
-    # Registrar la raíz de PySide6 y carpetas nativas de Qt para Windows
+    # Register the PySide6 root and the native Qt folders
     os.add_dll_directory(pyside_dir)
     for folder in ["Qt/bin", "Qt/plugins", "qml"]:
         path = os.path.join(pyside_dir, folder)
@@ -25,6 +26,7 @@ MQTT_BROKER   = "localhost"
 MQTT_PORT     = 1883
 MQTT_SUB_RESP = "robot/response"
 MQTT_SUB_STAT = "robot/status"
+MQTT_SUB_TELE = "robot/telemetry"
 MQTT_PUB      = "robot/command"
 CLIENT_ID     = "qt-robot-panel"
 
@@ -39,6 +41,11 @@ class Backend(QObject):
     modeChanged      = Signal(str)
     brakeModeChanged = Signal(str)
 
+    # Environmental telemetry (from robot/telemetry topic).
+    # Emitted on every valid message, even if the values did not change,
+    # so the UI can track data freshness.
+    telemetryChanged = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._connected = False
@@ -52,6 +59,12 @@ class Backend(QObject):
         self._right      = 0
         self._mode       = "manual"
         self._brake_mode = "coast"
+
+        # Internal telemetry (temperature always stored in Celsius)
+        self._temperature   = 0.0
+        self._humidity      = 0.0
+        self._sensor_id     = ""
+        self._has_telemetry = False
 
         # Synchronization - MUST be created before starting threads
         self._stop_event      = threading.Event()
@@ -135,6 +148,7 @@ class Backend(QObject):
             print("[MQTT] Connected to broker")
             client.subscribe(MQTT_SUB_RESP)
             client.subscribe(MQTT_SUB_STAT)
+            client.subscribe(MQTT_SUB_TELE)
             self._connected = True
             self.connectionChanged.emit(True)
         else:
@@ -163,6 +177,38 @@ class Backend(QObject):
             self._handle_status(parsed)
         elif msg.topic == MQTT_SUB_RESP:
             self._handle_response(payload, parsed)
+        elif msg.topic == MQTT_SUB_TELE and isinstance(parsed, dict):
+            self._handle_telemetry(parsed)
+
+    @staticmethod
+    def _is_number(value) -> bool:
+        # bool is a subclass of int, so it must be excluded explicitly
+        return (isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value))
+
+    def _handle_telemetry(self, obj: dict):
+        # Expected payload:
+        # {"sensor_id":"aht-01","temp":23.4,"temp_unit":"C","hum":58.2,"hum_unit":"%"}
+        temp = obj.get("temp")
+        hum  = obj.get("hum")
+        if not self._is_number(temp) or not self._is_number(hum):
+            print(f"[MQTT] Invalid telemetry ignored: {obj}")
+            return
+
+        # Normalize to Celsius if the sensor ever reports Fahrenheit
+        if str(obj.get("temp_unit", "C")).upper() == "F":
+            temp = (temp - 32.0) * 5.0 / 9.0
+
+        self._temperature = float(temp)
+        self._humidity    = float(hum)
+
+        sensor_id = obj.get("sensor_id")
+        if isinstance(sensor_id, str):
+            self._sensor_id = sensor_id
+
+        self._has_telemetry = True
+        self.telemetryChanged.emit()
 
     def _handle_status(self, obj: dict):
         # left / right
@@ -229,6 +275,22 @@ class Backend(QObject):
     def brakeMode(self):
         return self._brake_mode
 
+    @Property(float, notify=telemetryChanged)
+    def temperature(self):
+        return self._temperature
+
+    @Property(float, notify=telemetryChanged)
+    def humidity(self):
+        return self._humidity
+
+    @Property(str, notify=telemetryChanged)
+    def sensorId(self):
+        return self._sensor_id
+
+    @Property(bool, notify=telemetryChanged)
+    def hasTelemetry(self):
+        return self._has_telemetry
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
@@ -267,20 +329,9 @@ class Backend(QObject):
         self.responsesChanged.emit()
 
 
-# ------------------------------------------------------------------
-# Entry Point
-# ------------------------------------------------------------------
-
 if __name__ == "__main__":
-    # Asegurar la variable de entorno y las rutas para plugins de QML
-    qml_import_path = os.path.join(pyside_dir, "qml")
-    os.environ["QML2_IMPORT_PATH"] = qml_import_path
-
     app = QGuiApplication(sys.argv)
     engine = QQmlApplicationEngine()
-
-    # Indicar explícitamente a QML dónde buscar los componentes nativos
-    engine.addImportPath(qml_import_path)
 
     backend = Backend()
     engine.rootContext().setContextProperty("backend", backend)

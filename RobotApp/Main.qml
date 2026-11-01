@@ -11,6 +11,12 @@ ApplicationWindow {
 
     background: Rectangle { color: "#141419" }
 
+    // Closing the control panel closes the whole app (including the sensor window)
+    onClosing: Qt.quit()
+
+    // Environmental monitoring window (hidden until requested)
+    SensorWindow { id: sensorWindow }
+
     // ============================================================
     // Main Layout
     // ============================================================
@@ -36,6 +42,29 @@ ApplicationWindow {
             }
 
             Item { Layout.fillWidth: true }
+
+            // Environmental status summary + button to open the sensor window
+            Rectangle {
+                width: 12; height: 12; radius: 6
+                color: sensorWindow.overallColor
+            }
+
+            Text {
+                text: "Environment: " + sensorWindow.overallLabel
+                color: "white"
+                font.pixelSize: 13
+            }
+
+            Button {
+                text: "Sensors"
+                onClicked: {
+                    sensorWindow.show()
+                    sensorWindow.raise()
+                    sensorWindow.requestActivate()
+                }
+            }
+
+            Item { Layout.preferredWidth: 20 }
 
             Text {
                 text: "Robot Control"
@@ -441,7 +470,7 @@ ApplicationWindow {
                                 text: "Square Auto"
                                 Layout.preferredWidth: 120
                                 Layout.preferredHeight: 44
-                                onClicked: backend.send_command("S 100 2000 800")
+                                onClicked: backend.send_command("S 100 2000 700")
                             }
                         }
 
