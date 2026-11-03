@@ -46,7 +46,7 @@ ApplicationWindow {
             // Environmental status summary + button to open the sensor window
             Rectangle {
                 width: 12; height: 12; radius: 6
-                color: sensorWindow.overallColor
+                color: sensorWindow.online ? "#00adb5" : "#555"
             }
 
             Text {
