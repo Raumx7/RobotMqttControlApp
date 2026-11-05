@@ -22,7 +22,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QObject, Slot, Signal, Property
 
 # --- MQTT Configuration ---
-MQTT_BROKER   = "localhost"
+MQTT_BROKER   = "10.121.119.14"
 MQTT_PORT     = 1883
 MQTT_SUB_RESP = "robot/response"
 MQTT_SUB_STAT = "robot/status"

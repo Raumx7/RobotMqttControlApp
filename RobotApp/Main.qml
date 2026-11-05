@@ -99,8 +99,8 @@ ApplicationWindow {
 
                     // Chassis background color based on state
                     property color chassisColor: {
-                        if (backend.mode === "autonomous")
-                            return "#4a2e5a" // Purple
+                        if (backend.mode === "autonomous" || backend.mode === "rectangle_scan")
+                            return "#4a2e5a" // Purple (Modo autónomo / escaneo)
                         if (backend.leftPower !== 0 || backend.rightPower !== 0)
                             return "#1e3a5f" // Steel Blue
                         return "#2a2a33"     // Dark Gray
@@ -135,7 +135,6 @@ ApplicationWindow {
                             width: 30; height: 84; radius: 8
                             x: -15
                             y: 45
-                            // Color based on direction: Cyan for forward, Burnt Orange for reverse
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -286,7 +285,7 @@ ApplicationWindow {
                             Text { text: "Mode:"; color: "#aaa"; font.pixelSize: 13 }
                             Text {
                                 text: backend.mode
-                                color: backend.mode === "autonomous" ? "#b388ff" : "#00adb5"
+                                color: (backend.mode === "autonomous" || backend.mode === "rectangle_scan") ? "#b388ff" : "#00adb5"
                                 font.pixelSize: 13
                                 font.bold: true
                             }
@@ -431,46 +430,52 @@ ApplicationWindow {
                         }
 
                         GridLayout {
-                            columns: 2
+                            columns: 3
                             rowSpacing: 10
                             columnSpacing: 10
 
                             Button {
                                 text: "Forward"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 onClicked: backend.send_command("A 0 100")
                             }
                             Button {
                                 text: "Backward"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 onClicked: backend.send_command("A 0 -100")
                             }
                             Button {
                                 text: "Left"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 onClicked: backend.send_command("A -100 0")
                             }
                             Button {
                                 text: "Right"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 onClicked: backend.send_command("A 100 0")
                             }
                             Button {
                                 text: "Stop"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 highlighted: true
                                 onClicked: backend.send_command("X")
                             }
                             Button {
                                 text: "Square Auto"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 110
                                 Layout.preferredHeight: 44
                                 onClicked: backend.send_command("S 100 2000 700")
+                            }
+                            Button {
+                                text: "Thermal Routine"
+                                Layout.preferredWidth: 110
+                                Layout.preferredHeight: 44
+                                onClicked: backend.send_command("R 100 3000 1500 5000 800")
                             }
                         }
 
@@ -511,7 +516,6 @@ ApplicationWindow {
                 // ----- Last Responses (last 10, newest first, no scrolling) -----
                 Rectangle {
                     Layout.fillWidth: true
-                    // Fixed height: header + 10 lines. Sized so no scrolling is needed.
                     Layout.preferredHeight: 250
                     Layout.maximumHeight: 250
                     color: "#1b1b22"
@@ -564,7 +568,6 @@ ApplicationWindow {
                                         color: "#e0e0e0"
                                         font.family: "monospace"
                                         font.pixelSize: 13
-                                        // Dim older entries slightly to highlight the newest one
                                         opacity: index === 0 ? 1.0 : 0.7
                                     }
                                 }
