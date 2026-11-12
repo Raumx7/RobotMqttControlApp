@@ -7,9 +7,9 @@ ApplicationWindow {
     id: win
     visible: false
     width: 900
-    height: 580
+    height: 900 // Altura aumentada para la cuadrícula 2x2
     minimumWidth: 800
-    minimumHeight: 500
+    minimumHeight: 850
     title: "Environmental Monitoring"
     transientParent: null
 
@@ -33,6 +33,16 @@ ApplicationWindow {
     readonly property real humWarningHigh:  65
     readonly property real humCriticalHigh: 80
 
+    readonly property real eco2ScaleMin:    400
+    readonly property real eco2ScaleMax:    3000
+    readonly property real eco2WarningHigh: 1000
+    readonly property real eco2Critical:    2000
+
+    readonly property real tvocScaleMin:    0
+    readonly property real tvocScaleMax:    2000
+    readonly property real tvocWarningHigh: 250
+    readonly property real tvocCritical:    1000
+
     readonly property int staleTimeoutMs: 10000
 
     readonly property int levelNoData:   -1
@@ -40,16 +50,15 @@ ApplicationWindow {
     readonly property int levelWarning:   1
     readonly property int levelCritical:  2
 
-    // Dark theme palette based on reference images
-    readonly property color colorAccent:   "#4A90E2" // Blue accent
-    readonly property color colorPrimary:  "#00adb5" // Cyan used in main panel
-    readonly property color colorNormal:   "#2ECC71" // Green
-    readonly property color colorWarning:  "#F1C40F" // Yellow/Orange
-    readonly property color colorCritical: "#E74C3C" // Red
+    readonly property color colorAccent:   "#4A90E2"
+    readonly property color colorPrimary:  "#00adb5"
+    readonly property color colorNormal:   "#2ECC71"
+    readonly property color colorWarning:  "#F1C40F"
+    readonly property color colorCritical: "#E74C3C"
     readonly property color colorNoData:   "#7F8C8D"
 
-    readonly property color surface:      "#1E1E24" // Card background
-    readonly property color surfaceInner: "#141419" // Inner elements
+    readonly property color surface:      "#1E1E24"
+    readonly property color surfaceInner: "#141419"
     readonly property color textMuted:    "#95A5A6"
 
     function levelColor(level) {
@@ -82,6 +91,18 @@ ApplicationWindow {
         return levelNormal
     }
 
+    function eco2LevelOf(c) {
+        if (c > eco2Critical) return levelCritical
+        if (c > eco2WarningHigh) return levelWarning
+        return levelNormal
+    }
+
+    function tvocLevelOf(v) {
+        if (v > tvocCritical) return levelCritical
+        if (v > tvocWarningHigh) return levelWarning
+        return levelNormal
+    }
+
     function tempDetail(t) {
         if (t < tempCriticalLow) return "Critical cold (below " + tempCriticalLow + " °C)"
         if (t > tempCritical)    return "High temperature (above " + tempCritical + " °C)"
@@ -99,11 +120,25 @@ ApplicationWindow {
         return "Optimal range"
     }
 
+    function eco2Detail(c) {
+        if (c > eco2Critical) return "Critical CO2 (above " + eco2Critical + " ppm)"
+        if (c > eco2WarningHigh) return "Poor ventilation (above " + eco2WarningHigh + " ppm)"
+        return "Optimal ventilation"
+    }
+
+    function tvocDetail(v) {
+        if (v > tvocCritical) return "High VOC levels detected (above " + tvocCritical + " ppb)"
+        if (v > tvocWarningHigh) return "Moderate VOC levels (above " + tvocWarningHigh + " ppb)"
+        return "Clean air"
+    }
+
     // ============================================================
     // Data State
     // ============================================================
     readonly property real temp: backend.temperature
     readonly property real hum:  backend.humidity
+    readonly property real eco2: backend.eco2
+    readonly property real tvoc: backend.tvoc
     readonly property bool hasData: backend.hasTelemetry
 
     property real nowMs: Date.now()
@@ -117,8 +152,10 @@ ApplicationWindow {
 
     readonly property int tempLevel: online ? tempLevelOf(temp) : levelNoData
     readonly property int humLevel:  online ? humLevelOf(hum)   : levelNoData
+    readonly property int eco2Level: online ? eco2LevelOf(eco2) : levelNoData
+    readonly property int tvocLevel: online ? tvocLevelOf(tvoc) : levelNoData
 
-    readonly property int overallLevel: online ? Math.max(tempLevel, humLevel) : levelNoData
+    readonly property int overallLevel: online ? Math.max(tempLevel, humLevel, eco2Level, tvocLevel) : levelNoData
     readonly property string overallLabel: levelLabel(overallLevel)
 
     readonly property string freshnessText: {
@@ -215,7 +252,7 @@ ApplicationWindow {
                 spacing: 2
                 Text {
                     text: "HQ Robot - Environment"
-                    color: win.colorPrimary // Cambiado al azul del panel principal
+                    color: win.colorPrimary
                     font.pixelSize: 24
                     font.weight: Font.Light
                 }
@@ -253,11 +290,13 @@ ApplicationWindow {
             }
         }
 
-        // ---------- Cards Row ----------
-        RowLayout {
+        // ---------- Cards Grid (2x2) ----------
+        GridLayout {
+            columns: 2
+            rowSpacing: 20
+            columnSpacing: 20
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 20
 
             // ==========================================
             // Temperature Card
@@ -277,22 +316,12 @@ ApplicationWindow {
 
                     RowLayout {
                         spacing: 8
-                        Text {
-                            text: "\uD83C\uDF21" // 🌡 Icono de Termómetro
-                            color: win.colorPrimary
-                            font.pixelSize: 20
-                        }
-                        Text {
-                            text: "Temperature"
-                            color: "white"
-                            font.pixelSize: 16
-                            font.bold: true
-                        }
+                        Text { text: "\uD83C\uDF21"; color: win.colorPrimary; font.pixelSize: 20 }
+                        Text { text: "Temperature"; color: "white"; font.pixelSize: 16; font.bold: true }
                     }
 
                     Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.fillWidth: true; Layout.fillHeight: true
 
                         ArcGauge {
                             anchors.centerIn: parent
@@ -303,55 +332,29 @@ ApplicationWindow {
                         }
 
                         ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: -8
-
+                            anchors.centerIn: parent; spacing: -8
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 textFormat: Text.RichText
-                                text: (win.hasData ? win.temp.toFixed(1) : "--")
-                                      + "<span style='font-size:32px; color:#95A5A6;'> °C</span>"
-                                color: "white"
-                                font.pixelSize: 64
-                                font.weight: Font.Light
+                                text: (win.hasData ? win.temp.toFixed(1) : "--") + "<span style='font-size:32px; color:#95A5A6;'> °C</span>"
+                                color: "white"; font.pixelSize: 64; font.weight: Font.Light
                             }
-
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: win.levelLabel(win.tempLevel)
-                                color: win.levelColor(win.tempLevel)
-                                font.pixelSize: 18
-                                font.bold: true
-                                font.letterSpacing: 2
+                                color: win.levelColor(win.tempLevel); font.pixelSize: 18; font.bold: true; font.letterSpacing: 2
                             }
                         }
                     }
 
                     ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                text: win.hasData ? win.tempDetail(win.temp) : "Awaiting data..."
-                                color: win.textMuted
-                                font.pixelSize: 13
-                            }
-                            Item { Layout.fillWidth: true }
-                        }
-
+                        Layout.fillWidth: true; spacing: 6
+                        Text { text: win.hasData ? win.tempDetail(win.temp) : "Awaiting data..."; color: win.textMuted; font.pixelSize: 13 }
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 6
-                            radius: 3
-                            color: "#2C2C35"
-
+                            Layout.fillWidth: true; Layout.preferredHeight: 6; radius: 3; color: "#2C2C35"
                             Rectangle {
                                 width: parent.width * Math.max(0, Math.min(1, (win.temp - win.tempScaleMin) / (win.tempScaleMax - win.tempScaleMin)))
-                                height: parent.height
-                                radius: 3
-                                color: win.levelColor(win.tempLevel)
+                                height: parent.height; radius: 3; color: win.levelColor(win.tempLevel)
                                 Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
                             }
                         }
@@ -377,23 +380,12 @@ ApplicationWindow {
 
                     RowLayout {
                         spacing: 8
-                        Text {
-                            text: "\uD83D\uDCA7" // 💧 Icono de Gota de agua
-                            color: win.colorPrimary
-                            font.pixelSize: 20
-                        }
-                        Text {
-                            text: "Humidity"
-                            color: "white"
-                            font.pixelSize: 16
-                            font.bold: true
-                        }
+                        Text { text: "\uD83D\uDCA7"; color: win.colorPrimary; font.pixelSize: 20 }
+                        Text { text: "Humidity"; color: "white"; font.pixelSize: 16; font.bold: true }
                     }
 
                     Item {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-
+                        Layout.fillWidth: true; Layout.fillHeight: true
                         ArcGauge {
                             anchors.centerIn: parent
                             value: win.hum
@@ -401,57 +393,154 @@ ApplicationWindow {
                             scaleMax: win.humScaleMax
                             currentLevel: win.humLevel
                         }
-
                         ColumnLayout {
-                            anchors.centerIn: parent
-                            spacing: -8
-
+                            anchors.centerIn: parent; spacing: -8
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 textFormat: Text.RichText
-                                text: (win.hasData ? win.hum.toFixed(1) : "--")
-                                      + "<span style='font-size:32px; color:#95A5A6;'> %</span>"
-                                color: "white"
-                                font.pixelSize: 64
-                                font.weight: Font.Light
+                                text: (win.hasData ? win.hum.toFixed(1) : "--") + "<span style='font-size:32px; color:#95A5A6;'> %</span>"
+                                color: "white"; font.pixelSize: 64; font.weight: Font.Light
                             }
-
                             Text {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: win.levelLabel(win.humLevel)
-                                color: win.levelColor(win.humLevel)
-                                font.pixelSize: 18
-                                font.bold: true
-                                font.letterSpacing: 2
+                                color: win.levelColor(win.humLevel); font.pixelSize: 18; font.bold: true; font.letterSpacing: 2
                             }
                         }
                     }
 
                     ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                text: win.hasData ? win.humDetail(win.hum) : "Awaiting data..."
-                                color: win.textMuted
-                                font.pixelSize: 13
-                            }
-                            Item { Layout.fillWidth: true }
-                        }
-
+                        Layout.fillWidth: true; spacing: 6
+                        Text { text: win.hasData ? win.humDetail(win.hum) : "Awaiting data..."; color: win.textMuted; font.pixelSize: 13 }
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 6
-                            radius: 3
-                            color: "#2C2C35"
-
+                            Layout.fillWidth: true; Layout.preferredHeight: 6; radius: 3; color: "#2C2C35"
                             Rectangle {
                                 width: parent.width * Math.max(0, Math.min(1, (win.hum - win.humScaleMin) / (win.humScaleMax - win.humScaleMin)))
-                                height: parent.height
-                                radius: 3
-                                color: win.levelColor(win.humLevel)
+                                height: parent.height; radius: 3; color: win.levelColor(win.humLevel)
+                                Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // eCO2 Card
+            // ==========================================
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: win.surface
+                radius: 16
+                border.color: "#2C2C35"
+                border.width: 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 16
+
+                    RowLayout {
+                        spacing: 8
+                        Text { text: "☁️"; color: win.colorPrimary; font.pixelSize: 20 }
+                        Text { text: "eCO2"; color: "white"; font.pixelSize: 16; font.bold: true }
+                    }
+
+                    Item {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        ArcGauge {
+                            anchors.centerIn: parent
+                            value: win.eco2
+                            scaleMin: win.eco2ScaleMin
+                            scaleMax: win.eco2ScaleMax
+                            currentLevel: win.eco2Level
+                        }
+                        ColumnLayout {
+                            anchors.centerIn: parent; spacing: -8
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                textFormat: Text.RichText
+                                text: (win.hasData ? Math.round(win.eco2) : "--") + "<span style='font-size:32px; color:#95A5A6;'> ppm</span>"
+                                color: "white"; font.pixelSize: 64; font.weight: Font.Light
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: win.levelLabel(win.eco2Level)
+                                color: win.levelColor(win.eco2Level); font.pixelSize: 18; font.bold: true; font.letterSpacing: 2
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 6
+                        Text { text: win.hasData ? win.eco2Detail(win.eco2) : "Awaiting data..."; color: win.textMuted; font.pixelSize: 13 }
+                        Rectangle {
+                            Layout.fillWidth: true; Layout.preferredHeight: 6; radius: 3; color: "#2C2C35"
+                            Rectangle {
+                                width: parent.width * Math.max(0, Math.min(1, (win.eco2 - win.eco2ScaleMin) / (win.eco2ScaleMax - win.eco2ScaleMin)))
+                                height: parent.height; radius: 3; color: win.levelColor(win.eco2Level)
+                                Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // TVOC Card
+            // ==========================================
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: win.surface
+                radius: 16
+                border.color: "#2C2C35"
+                border.width: 1
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 24
+                    spacing: 16
+
+                    RowLayout {
+                        spacing: 8
+                        Text { text: "🧪"; color: win.colorPrimary; font.pixelSize: 20 }
+                        Text { text: "TVOC"; color: "white"; font.pixelSize: 16; font.bold: true }
+                    }
+
+                    Item {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        ArcGauge {
+                            anchors.centerIn: parent
+                            value: win.tvoc
+                            scaleMin: win.tvocScaleMin
+                            scaleMax: win.tvocScaleMax
+                            currentLevel: win.tvocLevel
+                        }
+                        ColumnLayout {
+                            anchors.centerIn: parent; spacing: -8
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                textFormat: Text.RichText
+                                text: (win.hasData ? Math.round(win.tvoc) : "--") + "<span style='font-size:32px; color:#95A5A6;'> ppb</span>"
+                                color: "white"; font.pixelSize: 64; font.weight: Font.Light
+                            }
+                            Text {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: win.levelLabel(win.tvocLevel)
+                                color: win.levelColor(win.tvocLevel); font.pixelSize: 18; font.bold: true; font.letterSpacing: 2
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 6
+                        Text { text: win.hasData ? win.tvocDetail(win.tvoc) : "Awaiting data..."; color: win.textMuted; font.pixelSize: 13 }
+                        Rectangle {
+                            Layout.fillWidth: true; Layout.preferredHeight: 6; radius: 3; color: "#2C2C35"
+                            Rectangle {
+                                width: parent.width * Math.max(0, Math.min(1, (win.tvoc - win.tvocScaleMin) / (win.tvocScaleMax - win.tvocScaleMin)))
+                                height: parent.height; radius: 3; color: win.levelColor(win.tvocLevel)
                                 Behavior on width { NumberAnimation { duration: 500; easing.type: Easing.OutCubic } }
                             }
                         }

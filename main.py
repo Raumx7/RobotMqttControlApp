@@ -22,7 +22,6 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QObject, Slot, Signal, Property
 
 # --- MQTT Configuration ---
-MQTT_BROKER   = "localhost"
 MQTT_PORT     = 1883
 MQTT_SUB_RESP = "robot/response"
 MQTT_SUB_STAT = "robot/status"
@@ -42,13 +41,13 @@ class Backend(QObject):
     brakeModeChanged = Signal(str)
 
     # Environmental telemetry (from robot/telemetry topic).
-    # Emitted on every valid message, even if the values did not change,
-    # so the UI can track data freshness.
     telemetryChanged = Signal()
+    brokerIpChanged  = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._connected = False
+        self._broker_ip = "localhost"
 
         # Last robot responses, newest first (one compact line each)
         self._responses     = []
@@ -60,9 +59,11 @@ class Backend(QObject):
         self._mode       = "manual"
         self._brake_mode = "coast"
 
-        # Internal telemetry (temperature always stored in Celsius)
+        # Internal telemetry
         self._temperature   = 0.0
         self._humidity      = 0.0
+        self._eco2          = 400
+        self._tvoc          = 0
         self._sensor_id     = ""
         self._has_telemetry = False
 
@@ -100,8 +101,8 @@ class Backend(QObject):
         while not self._stop_event.is_set():
             if not self._client.is_connected():
                 try:
-                    print(f"[MQTT] Connecting to {MQTT_BROKER}:{MQTT_PORT}...")
-                    self._client.connect(MQTT_BROKER, MQTT_PORT, keepalive=30)
+                    print(f"[MQTT] Connecting to {self._broker_ip}:{MQTT_PORT}...")
+                    self._client.connect(self._broker_ip, MQTT_PORT, keepalive=30)
                     self._client.loop_start()
                     backoff = 1.0
                 except Exception as e:
@@ -167,7 +168,6 @@ class Backend(QObject):
         except Exception:
             payload = "<decode error>"
 
-        # Tolerant parsing
         try:
             parsed = json.loads(payload)
         except Exception:
@@ -182,36 +182,41 @@ class Backend(QObject):
 
     @staticmethod
     def _is_number(value) -> bool:
-        # bool is a subclass of int, so it must be excluded explicitly
         return (isinstance(value, (int, float))
                 and not isinstance(value, bool)
                 and math.isfinite(value))
 
     def _handle_telemetry(self, obj: dict):
-        # Expected payload:
-        # {"sensor_id":"aht-01","temp":23.4,"temp_unit":"C","hum":58.2,"hum_unit":"%"}
+        updated = False
+        
         temp = obj.get("temp")
         hum  = obj.get("hum")
-        if not self._is_number(temp) or not self._is_number(hum):
-            print(f"[MQTT] Invalid telemetry ignored: {obj}")
-            return
+        eco2 = obj.get("eco2")
+        tvoc = obj.get("tvoc")
 
-        # Normalize to Celsius if the sensor ever reports Fahrenheit
-        if str(obj.get("temp_unit", "C")).upper() == "F":
-            temp = (temp - 32.0) * 5.0 / 9.0
+        # Parsear AHT21
+        if self._is_number(temp) and self._is_number(hum):
+            if str(obj.get("temp_unit", "C")).upper() == "F":
+                temp = (temp - 32.0) * 5.0 / 9.0
+            self._temperature = float(temp)
+            self._humidity    = float(hum)
+            updated = True
 
-        self._temperature = float(temp)
-        self._humidity    = float(hum)
+        # Parsear ENS160+
+        if self._is_number(eco2) and self._is_number(tvoc):
+            self._eco2 = int(eco2)
+            self._tvoc = int(tvoc)
+            updated = True
 
         sensor_id = obj.get("sensor_id")
         if isinstance(sensor_id, str):
             self._sensor_id = sensor_id
 
-        self._has_telemetry = True
-        self.telemetryChanged.emit()
+        if updated:
+            self._has_telemetry = True
+            self.telemetryChanged.emit()
 
     def _handle_status(self, obj: dict):
-        # left / right
         l = obj.get("left")
         r = obj.get("right")
         if isinstance(l, int) and l != self._left:
@@ -221,28 +226,23 @@ class Backend(QObject):
             self._right = r
             self.rightChanged.emit(r)
 
-        # mode
         m = obj.get("mode")
         if isinstance(m, str) and m != self._mode:
             self._mode = m
             self.modeChanged.emit(m)
 
-        # brake_mode
         b = obj.get("brake_mode")
         if isinstance(b, str) and b != self._brake_mode:
             self._brake_mode = b
             self.brakeModeChanged.emit(b)
 
     def _handle_response(self, raw: str, parsed):
-        # Keep each response on a single line so the log never needs scrolling
         if parsed is not None:
             line = json.dumps(parsed, ensure_ascii=False)
         else:
             line = " ".join(raw.split())
 
         print(f"[MQTT] response: {line}")
-
-        # Newest first, keep only the last N responses
         self._responses.insert(0, line)
         del self._responses[self._max_responses:]
         self.responsesChanged.emit()
@@ -254,6 +254,10 @@ class Backend(QObject):
     @Property(bool, notify=connectionChanged)
     def connected(self):
         return self._connected
+
+    @Property(str, notify=brokerIpChanged)
+    def brokerIp(self):
+        return self._broker_ip
 
     @Property(list, notify=responsesChanged)
     def lastResponses(self):
@@ -283,6 +287,14 @@ class Backend(QObject):
     def humidity(self):
         return self._humidity
 
+    @Property(int, notify=telemetryChanged)
+    def eco2(self):
+        return self._eco2
+
+    @Property(int, notify=telemetryChanged)
+    def tvoc(self):
+        return self._tvoc
+
     @Property(str, notify=telemetryChanged)
     def sensorId(self):
         return self._sensor_id
@@ -294,6 +306,16 @@ class Backend(QObject):
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    @Slot(str)
+    def set_broker_ip(self, ip: str):
+        ip = ip.strip()
+        if ip and ip != self._broker_ip:
+            print(f"[MQTT] Changing broker IP to {ip}")
+            self._broker_ip = ip
+            self.brokerIpChanged.emit(ip)
+            if self._client.is_connected():
+                self._client.disconnect()
 
     @Slot(str)
     def send_command(self, command: str):

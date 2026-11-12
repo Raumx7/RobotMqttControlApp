@@ -36,9 +36,31 @@ ApplicationWindow {
             }
 
             Text {
-                text: backend.connected ? "Connected to broker" : "Disconnected"
+                text: backend.connected ? "Connected" : "Disconnected"
                 color: "white"
                 font.pixelSize: 14
+            }
+
+            TextField {
+                id: ipInput
+                text: backend.brokerIp
+                placeholderText: "MQTT Broker IP"
+                font.pixelSize: 13
+                color: "white"
+                background: Rectangle {
+                    color: "#1b1b22"
+                    border.color: "#393e46"
+                    radius: 4
+                }
+                Layout.preferredWidth: 130
+                Layout.preferredHeight: 28
+                Layout.leftMargin: 10
+            }
+
+            Button {
+                text: "Set IP"
+                Layout.preferredHeight: 28
+                onClicked: backend.set_broker_ip(ipInput.text)
             }
 
             Item { Layout.fillWidth: true }
@@ -508,10 +530,9 @@ ApplicationWindow {
                     }
                 }
 
-                // ----- Last Responses (last 10, newest first, no scrolling) -----
+                // ----- Last Responses -----
                 Rectangle {
                     Layout.fillWidth: true
-                    // Fixed height: header + 10 lines. Sized so no scrolling is needed.
                     Layout.preferredHeight: 250
                     Layout.maximumHeight: 250
                     color: "#1b1b22"
@@ -564,7 +585,6 @@ ApplicationWindow {
                                         color: "#e0e0e0"
                                         font.family: "monospace"
                                         font.pixelSize: 13
-                                        // Dim older entries slightly to highlight the newest one
                                         opacity: index === 0 ? 1.0 : 0.7
                                     }
                                 }
