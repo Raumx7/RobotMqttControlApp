@@ -39,6 +39,10 @@ class Backend(QObject):
     rightChanged     = Signal(int)
     modeChanged      = Signal(str)
     brakeModeChanged = Signal(str)
+    
+    # NUEVAS SEÑALES PARA LÁSER
+    frontChanged = Signal(float)
+    backChanged = Signal(float)
 
     # Environmental telemetry (from robot/telemetry topic).
     telemetryChanged = Signal()
@@ -58,6 +62,10 @@ class Backend(QObject):
         self._right      = 0
         self._mode       = "manual"
         self._brake_mode = "coast"
+        
+        # NUEVAS VARIABLES PARA LÁSER
+        self._front_distance = 0.0
+        self._back_distance = 0.0
 
         # Internal telemetry
         self._temperature   = 0.0
@@ -226,15 +234,26 @@ class Backend(QObject):
             self._right = r
             self.rightChanged.emit(r)
 
+        # NUEVO: Extraer valores "front" y "back" del JSON del láser
+        f = obj.get("front")
+        if isinstance(f, (int, float)) and f != self._front_distance:
+            self._front_distance = float(f)
+            self.frontChanged.emit(self._front_distance)
+            
+        b = obj.get("back")
+        if isinstance(b, (int, float)) and b != self._back_distance:
+            self._back_distance = float(b)
+            self.backChanged.emit(self._back_distance)
+
         m = obj.get("mode")
         if isinstance(m, str) and m != self._mode:
             self._mode = m
             self.modeChanged.emit(m)
 
-        b = obj.get("brake_mode")
-        if isinstance(b, str) and b != self._brake_mode:
-            self._brake_mode = b
-            self.brakeModeChanged.emit(b)
+        b_mode = obj.get("brake_mode")
+        if isinstance(b_mode, str) and b_mode != self._brake_mode:
+            self._brake_mode = b_mode
+            self.brakeModeChanged.emit(b_mode)
 
     def _handle_response(self, raw: str, parsed):
         if parsed is not None:
@@ -270,6 +289,15 @@ class Backend(QObject):
     @Property(int, notify=rightChanged)
     def rightPower(self):
         return self._right
+
+    # NUEVO: Propiedades QML para el láser
+    @Property(float, notify=frontChanged)
+    def frontDistance(self):
+        return self._front_distance
+
+    @Property(float, notify=backChanged)
+    def backDistance(self):
+        return self._back_distance
 
     @Property(str, notify=modeChanged)
     def mode(self):

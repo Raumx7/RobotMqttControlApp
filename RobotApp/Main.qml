@@ -262,7 +262,7 @@ ApplicationWindow {
                 // ----- Status Panel -----
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 150
+                    Layout.preferredHeight: 180 // Incrementé ligeramente el alto para acomodar los lásers
                     color: "#1b1b22"
                     border.color: "#393e46"
                     border.width: 1
@@ -301,6 +301,24 @@ ApplicationWindow {
                                 color: backend.rightPower > 0 ? "#00adb5"
                                      : backend.rightPower < 0 ? "#d65a31"
                                      : "#777"
+                                font.pixelSize: 13
+                                font.bold: true
+                            }
+
+                            // NUEVO: Texto para el sensor láser delantero
+                            Text { text: "Front laser:"; color: "#aaa"; font.pixelSize: 13 }
+                            Text {
+                                text: backend.frontDistance.toFixed(1) + " cm"
+                                color: backend.frontDistance < 20.0 ? "#d65a31" : "#00adb5" // Rojo si está muy cerca
+                                font.pixelSize: 13
+                                font.bold: true
+                            }
+
+                            // NUEVO: Texto para el sensor láser trasero
+                            Text { text: "Back laser:"; color: "#aaa"; font.pixelSize: 13 }
+                            Text {
+                                text: backend.backDistance.toFixed(1) + " cm"
+                                color: backend.backDistance < 20.0 ? "#d65a31" : "#00adb5" // Rojo si está muy cerca
                                 font.pixelSize: 13
                                 font.bold: true
                             }
