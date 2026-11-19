@@ -11,11 +11,14 @@ ApplicationWindow {
 
     background: Rectangle { color: "#141419" }
 
-    // Closing the control panel closes the whole app (including the sensor window)
+    // Closing the control panel closes the whole app (including the sensor & camera windows)
     onClosing: Qt.quit()
 
     // Environmental monitoring window (hidden until requested)
     SensorWindow { id: sensorWindow }
+
+    // Camera & Color Detection window (hidden until requested)
+    CameraWindow { id: cameraWindow }
 
     // ============================================================
     // Main Layout
@@ -83,6 +86,15 @@ ApplicationWindow {
                     sensorWindow.show()
                     sensorWindow.raise()
                     sensorWindow.requestActivate()
+                }
+            }
+
+            Button {
+                text: "Camera"
+                onClicked: {
+                    cameraWindow.show()
+                    cameraWindow.raise()
+                    cameraWindow.requestActivate()
                 }
             }
 
@@ -157,7 +169,6 @@ ApplicationWindow {
                             width: 30; height: 84; radius: 8
                             x: -15
                             y: 45
-                            // Color based on direction: Cyan for forward, Burnt Orange for reverse
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -262,7 +273,7 @@ ApplicationWindow {
                 // ----- Status Panel -----
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180 // Incrementé ligeramente el alto para acomodar los lásers
+                    Layout.preferredHeight: 185
                     color: "#1b1b22"
                     border.color: "#393e46"
                     border.width: 1
@@ -305,20 +316,18 @@ ApplicationWindow {
                                 font.bold: true
                             }
 
-                            // NUEVO: Texto para el sensor láser delantero
                             Text { text: "Front laser:"; color: "#aaa"; font.pixelSize: 13 }
                             Text {
                                 text: backend.frontDistance.toFixed(1) + " cm"
-                                color: backend.frontDistance < 20.0 ? "#d65a31" : "#00adb5" // Rojo si está muy cerca
+                                color: backend.frontDistance < 20.0 ? "#d65a31" : "#00adb5"
                                 font.pixelSize: 13
                                 font.bold: true
                             }
 
-                            // NUEVO: Texto para el sensor láser trasero
                             Text { text: "Back laser:"; color: "#aaa"; font.pixelSize: 13 }
                             Text {
                                 text: backend.backDistance.toFixed(1) + " cm"
-                                color: backend.backDistance < 20.0 ? "#d65a31" : "#00adb5" // Rojo si está muy cerca
+                                color: backend.backDistance < 20.0 ? "#d65a31" : "#00adb5"
                                 font.pixelSize: 13
                                 font.bold: true
                             }
