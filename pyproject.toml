@@ -1,5 +1,12 @@
 [project]
-name = "PySide QtQuick Project"
+name = "PySide Widgets Project"
 
 [tool.pyside6-project]
-files = ["main.py", "RobotApp/Main.qml", "RobotApp/SensorWindow.qml", "RobotApp/qmldir, "RobotApp/CameraWindow.qml"]
+files = [
+    "main.py",
+    "RobotApp/Main.qml",
+    "RobotApp/SensorWindow.qml",
+    "RobotApp/CameraWindow.qml",
+    "RobotApp/qmldir",
+    "Images/RobotAppPanel.png"
+]

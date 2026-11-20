@@ -21,6 +21,116 @@ ApplicationWindow {
     CameraWindow { id: cameraWindow }
 
     // ============================================================
+    // Distance ranges (must match clamp_distance() on the robot)
+    // ============================================================
+    // Possible readings, nearest -> farthest. -1.0 is the "no reading" sentinel.
+    readonly property var distLevels: [0, 2, 5, 10, 20, 30, 50, 80, 100, 120]
+
+    // Range color gradient: far (safe) -> mid (caution) -> near (danger)
+    readonly property color colFar:  "#00adb5"
+    readonly property color colMid:  "#f0b429"
+    readonly property color colNear: "#e5484d"
+    readonly property color colOff:  "#2a2f38"
+
+    function lerpColor(a, b, t) {
+        return Qt.rgba(a.r + (b.r - a.r) * t,
+                       a.g + (b.g - a.g) * t,
+                       a.b + (b.b - a.b) * t,
+                       1.0)
+    }
+
+    // Color of range band i (0 = nearest to the robot)
+    function bandColor(i) {
+        var t = 1.0 - i / (distLevels.length - 1)   // 0 = far, 1 = near
+        return t < 0.5 ? lerpColor(colFar, colMid, t * 2.0)
+                       : lerpColor(colMid, colNear, (t - 0.5) * 2.0)
+    }
+
+    // Index of the band that matches a reading, or -1 when there is no data
+    function distanceIndex(d) {
+        if (d < 0) return -1
+        var idx = 0
+        for (var i = 0; i < distLevels.length; i++) {
+            if (distLevels[i] <= d) idx = i
+        }
+        return idx
+    }
+
+    function distanceText(d) {
+        return d < 0 ? "No data" : d.toFixed(1) + " cm"
+    }
+
+    function distanceColor(d) {
+        return d < 0 ? "#777" : bandColor(distanceIndex(d))
+    }
+
+    // Raw robot response color: green if success is true, red if false
+    function responseColor(line) {
+        try {
+            var obj = JSON.parse(line)
+            if (obj && obj.success === true)  return "#46d37f"
+            if (obj && obj.success === false) return "#ff6b6b"
+        } catch (e) {
+            // Not JSON: fall through to the default color
+        }
+        return "#e0e0e0"
+    }
+
+    // ============================================================
+    // Reusable components
+    // ============================================================
+
+    // Glowing triangular direction button (points up; rotate it from the outside)
+    component ArrowButton: Item {
+        id: arrow
+        property color tone: "#00adb5"
+        readonly property bool hot: ma.pressed || ma.containsMouse
+        signal clicked()
+
+        width: 64
+        height: 64
+        scale: ma.pressed ? 0.88 : (ma.containsMouse ? 1.08 : 1.0)
+        Behavior on scale { NumberAnimation { duration: 80 } }
+
+        onHotChanged: cv.requestPaint()
+        onToneChanged: cv.requestPaint()
+
+        Canvas {
+            id: cv
+            anchors.fill: parent
+            Component.onCompleted: requestPaint()
+
+            onPaint: {
+                var ctx = getContext("2d")
+                ctx.clearRect(0, 0, width, height)
+
+                var c = arrow.hot ? Qt.lighter(arrow.tone, 1.35) : arrow.tone
+                ctx.shadowColor = arrow.tone
+                ctx.shadowBlur = arrow.hot ? 14 : 9
+                ctx.fillStyle = c
+                ctx.strokeStyle = c
+                ctx.lineJoin = "round"
+                ctx.lineWidth = 6
+
+                ctx.beginPath()
+                ctx.moveTo(width / 2, 13)
+                ctx.lineTo(width - 14, height - 15)
+                ctx.lineTo(14, height - 15)
+                ctx.closePath()
+                ctx.fill()
+                ctx.stroke()
+            }
+        }
+
+        MouseArea {
+            id: ma
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: arrow.clicked()
+        }
+    }
+
+    // ============================================================
     // Main Layout
     // ============================================================
     ColumnLayout {
@@ -122,10 +232,10 @@ ApplicationWindow {
                 Layout.fillHeight: true
                 spacing: 10
 
-                // ----- Robot Schema (top view, vertical) -----
+                // ----- Robot Schema (top view, vertical) + distance ranges -----
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 400
+                    Layout.preferredHeight: 500
                     color: "#1b1b22"
                     border.color: "#393e46"
                     border.width: 1
@@ -140,25 +250,85 @@ ApplicationWindow {
                         return "#2a2a33"     // Dark Gray
                     }
 
+                    // ----- Distance range fans (drawn behind the chassis) -----
+                    // Concentric bands in front and behind the robot. A band is lit when the
+                    // obstacle is at or inside that range, so the fan fills up as it gets closer.
+                    Canvas {
+                        id: rangeFans
+                        anchors.fill: parent
+
+                        property real front: backend.frontDistance
+                        property real back:  backend.backDistance
+
+                        onFrontChanged: requestPaint()
+                        onBackChanged: requestPaint()
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        Component.onCompleted: requestPaint()
+
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+
+                            var n = window.distLevels.length
+                            var cx = width / 2
+                            var cy = height / 2
+                            var halfH = chassis.height / 2
+                            var inner = 10
+                            var avail = (height - chassis.height) / 2 - 12
+                            var step = Math.max(4, Math.min(12, (avail - inner) / n))
+                            var thick = step * 0.62
+                            var span = 32 * Math.PI / 180
+                            var gap = 3.5 * Math.PI / 180
+
+                            // Draws one fan (two mirrored halves) centered on a chassis edge
+                            function drawFan(centerY, baseAngle, idx) {
+                                ctx.lineWidth = thick
+                                ctx.lineCap = "round"
+                                for (var i = 0; i < n; i++) {
+                                    var lit = idx >= 0 && i >= idx
+                                    var color = lit ? window.bandColor(i) : window.colOff
+                                    var r = inner + i * step + thick / 2
+
+                                    ctx.strokeStyle = color
+                                    ctx.shadowColor = color
+                                    ctx.shadowBlur = lit ? 6 : 0
+
+                                    ctx.beginPath()
+                                    ctx.arc(cx, centerY, r, baseAngle - span, baseAngle - gap, false)
+                                    ctx.stroke()
+
+                                    ctx.beginPath()
+                                    ctx.arc(cx, centerY, r, baseAngle + gap, baseAngle + span, false)
+                                    ctx.stroke()
+                                }
+                                ctx.shadowBlur = 0
+                            }
+
+                            drawFan(cy - halfH, -Math.PI / 2, window.distanceIndex(front))
+                            drawFan(cy + halfH,  Math.PI / 2, window.distanceIndex(back))
+                        }
+                    }
+
                     // ----- Chassis (vertical rounded body, front pointing up) -----
                     Rectangle {
                         id: chassis
                         anchors.centerIn: parent
-                        width: 150
-                        height: 330
-                        radius: 50
+                        width: 120
+                        height: 220
+                        radius: 40
                         color: parent.chassisColor
                         border.color: "#00adb5"
                         border.width: 3
 
                         Behavior on color { ColorAnimation { duration: 300 } }
 
-                        // Longitudinal axis line (Decorative, now vertical)
+                        // Longitudinal axis line (Decorative, vertical)
                         Rectangle {
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.verticalCenter: parent.verticalCenter
                             width: 2
-                            height: parent.height - 90
+                            height: parent.height - 120
                             color: "#00adb5"
                             opacity: 0.15
                         }
@@ -166,9 +336,9 @@ ApplicationWindow {
                         // ----- Wheels (along the long sides of the chassis) -----
                         // Left Front
                         Rectangle {
-                            width: 30; height: 84; radius: 8
-                            x: -15
-                            y: 45
+                            width: 26; height: 66; radius: 8
+                            x: -13
+                            y: 24
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -182,16 +352,16 @@ ApplicationWindow {
                                     : backend.leftPower < 0 ? "▼"
                                     : "•"
                                 color: "white"
-                                font.pixelSize: 16
+                                font.pixelSize: 14
                                 font.bold: true
                             }
                         }
 
                         // Right Front
                         Rectangle {
-                            width: 30; height: 84; radius: 8
-                            x: parent.width - 15
-                            y: 45
+                            width: 26; height: 66; radius: 8
+                            x: parent.width - 13
+                            y: 24
                             color: backend.rightPower > 0 ? "#00adb5"
                                  : backend.rightPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -205,16 +375,16 @@ ApplicationWindow {
                                     : backend.rightPower < 0 ? "▼"
                                     : "•"
                                 color: "white"
-                                font.pixelSize: 16
+                                font.pixelSize: 14
                                 font.bold: true
                             }
                         }
 
                         // Left Rear
                         Rectangle {
-                            width: 30; height: 84; radius: 8
-                            x: -15
-                            y: parent.height - 129
+                            width: 26; height: 66; radius: 8
+                            x: -13
+                            y: parent.height - 90
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -228,16 +398,16 @@ ApplicationWindow {
                                     : backend.leftPower < 0 ? "▼"
                                     : "•"
                                 color: "white"
-                                font.pixelSize: 16
+                                font.pixelSize: 14
                                 font.bold: true
                             }
                         }
 
                         // Right Rear
                         Rectangle {
-                            width: 30; height: 84; radius: 8
-                            x: parent.width - 15
-                            y: parent.height - 129
+                            width: 26; height: 66; radius: 8
+                            x: parent.width - 13
+                            y: parent.height - 90
                             color: backend.rightPower > 0 ? "#00adb5"
                                  : backend.rightPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -251,21 +421,51 @@ ApplicationWindow {
                                     : backend.rightPower < 0 ? "▼"
                                     : "•"
                                 color: "white"
-                                font.pixelSize: 16
+                                font.pixelSize: 14
                                 font.bold: true
                             }
                         }
 
-                        // "FRONT" Label
+                        // "FRONT" label + front distance
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
-                            anchors.topMargin: 14
+                            anchors.topMargin: 10
                             text: "FRONT"
                             color: "#00adb5"
                             font.pixelSize: 10
                             font.bold: true
                             opacity: 0.5
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: 26
+                            text: window.distanceText(backend.frontDistance)
+                            color: window.distanceColor(backend.frontDistance)
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+
+                        // "REAR" label + rear distance
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 10
+                            text: "REAR"
+                            color: "#00adb5"
+                            font.pixelSize: 10
+                            font.bold: true
+                            opacity: 0.5
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: 26
+                            text: window.distanceText(backend.backDistance)
+                            color: window.distanceColor(backend.backDistance)
+                            font.pixelSize: 12
+                            font.bold: true
                         }
                     }
                 }
@@ -318,16 +518,20 @@ ApplicationWindow {
 
                             Text { text: "Front laser:"; color: "#aaa"; font.pixelSize: 13 }
                             Text {
-                                text: backend.frontDistance.toFixed(1) + " cm"
-                                color: backend.frontDistance < 20.0 ? "#d65a31" : "#00adb5"
+                                text: window.distanceText(backend.frontDistance)
+                                color: backend.frontDistance < 0 ? "#777"
+                                     : backend.frontDistance < 20.0 ? "#d65a31"
+                                     : "#00adb5"
                                 font.pixelSize: 13
                                 font.bold: true
                             }
 
                             Text { text: "Back laser:"; color: "#aaa"; font.pixelSize: 13 }
                             Text {
-                                text: backend.backDistance.toFixed(1) + " cm"
-                                color: backend.backDistance < 20.0 ? "#d65a31" : "#00adb5"
+                                text: window.distanceText(backend.backDistance)
+                                color: backend.backDistance < 0 ? "#777"
+                                     : backend.backDistance < 20.0 ? "#d65a31"
+                                     : "#00adb5"
                                 font.pixelSize: 13
                                 font.bold: true
                             }
@@ -363,7 +567,7 @@ ApplicationWindow {
                 // ----- Joystick + Buttons -----
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 280
+                    Layout.preferredHeight: 390
                     spacing: 24
 
                     // --- Joystick ---
@@ -479,47 +683,125 @@ ApplicationWindow {
                             Layout.alignment: Qt.AlignHCenter
                         }
 
-                        GridLayout {
-                            columns: 2
-                            rowSpacing: 10
-                            columnSpacing: 10
+                        // --- Direction pad: arrow buttons + emergency STOP in the center ---
+                        Rectangle {
+                            id: dpad
+                            Layout.alignment: Qt.AlignHCenter
+                            Layout.preferredWidth: 200
+                            Layout.preferredHeight: 200
+                            radius: 100
+                            color: "#222831"
+                            border.color: "#393e46"
+                            border.width: 4
 
-                            Button {
-                                text: "Forward"
-                                Layout.preferredWidth: 120
-                                Layout.preferredHeight: 44
+                            // Forward
+                            ArrowButton {
+                                x: 68; y: 0
+                                rotation: 0
                                 onClicked: backend.send_command("A 0 100")
                             }
-                            Button {
-                                text: "Backward"
-                                Layout.preferredWidth: 120
-                                Layout.preferredHeight: 44
-                                onClicked: backend.send_command("A 0 -100")
-                            }
-                            Button {
-                                text: "Left"
-                                Layout.preferredWidth: 120
-                                Layout.preferredHeight: 44
-                                onClicked: backend.send_command("A -100 0")
-                            }
-                            Button {
-                                text: "Right"
-                                Layout.preferredWidth: 120
-                                Layout.preferredHeight: 44
+                            // Right
+                            ArrowButton {
+                                x: 136; y: 68
+                                rotation: 90
                                 onClicked: backend.send_command("A 100 0")
                             }
-                            Button {
-                                text: "Stop"
-                                Layout.preferredWidth: 120
-                                Layout.preferredHeight: 44
-                                highlighted: true
-                                onClicked: backend.send_command("X")
+                            // Backward
+                            ArrowButton {
+                                x: 68; y: 136
+                                rotation: 180
+                                onClicked: backend.send_command("A 0 -100")
                             }
+                            // Left
+                            ArrowButton {
+                                x: 0; y: 68
+                                rotation: 270
+                                onClicked: backend.send_command("A -100 0")
+                            }
+
+                            // Emergency STOP
+                            Rectangle {
+                                id: stopHalo
+                                anchors.centerIn: parent
+                                width: 92
+                                height: 92
+                                radius: 46
+                                color: Qt.rgba(0.9, 0.28, 0.3, stopArea.containsMouse ? 0.28 : 0.15)
+                            }
+                            Rectangle {
+                                id: stopButton
+                                anchors.centerIn: parent
+                                width: 78
+                                height: 78
+                                radius: 39
+                                color: stopArea.pressed ? "#c0353a" : "#e5484d"
+                                border.color: "#7f1d1f"
+                                border.width: 4
+                                scale: stopArea.pressed ? 0.94 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 80 } }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "STOP"
+                                    color: "white"
+                                    font.pixelSize: 16
+                                    font.bold: true
+                                }
+
+                                MouseArea {
+                                    id: stopArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: backend.send_command("X")
+                                }
+                            }
+                        }
+
+                        // --- Autonomous routines ---
+                        RowLayout {
+                            Layout.alignment: Qt.AlignHCenter
+                            spacing: 10
+
                             Button {
                                 text: "Square Auto"
-                                Layout.preferredWidth: 120
+                                Layout.preferredWidth: 160
                                 Layout.preferredHeight: 44
+                                leftPadding: 38
                                 onClicked: backend.send_command("S 100 2000 700")
+
+                                // Square icon
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 14
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 16
+                                    height: 16
+                                    radius: 2
+                                    color: "transparent"
+                                    border.width: 2
+                                    border.color: parent.palette.buttonText
+                                }
+                            }
+
+                            Button {
+                                text: "Rectangle Scan"
+                                Layout.preferredWidth: 160
+                                Layout.preferredHeight: 44
+                                leftPadding: 38
+                                onClicked: backend.send_command("R 85 3000 1500 5000 800")
+
+                                // Rectangle icon
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 22
+                                    height: 14
+                                    radius: 2
+                                    color: "transparent"
+                                    border.width: 2
+                                    border.color: parent.palette.buttonText
+                                }
                             }
                         }
 
@@ -530,7 +812,7 @@ ApplicationWindow {
                             font.pixelSize: 13
                             font.bold: true
                             Layout.alignment: Qt.AlignHCenter
-                            Layout.topMargin: 8
+                            Layout.topMargin: 4
                         }
 
                         RowLayout {
@@ -609,7 +891,8 @@ ApplicationWindow {
                                         height: 17
                                         text: modelData
                                         elide: Text.ElideRight
-                                        color: "#e0e0e0"
+                                        // Green when success:true, red when success:false
+                                        color: window.responseColor(modelData)
                                         font.family: "monospace"
                                         font.pixelSize: 13
                                         opacity: index === 0 ? 1.0 : 0.7
