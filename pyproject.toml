@@ -8,5 +8,9 @@ files = [
     "RobotApp/SensorWindow.qml",
     "RobotApp/CameraWindow.qml",
     "RobotApp/qmldir",
-    "Images/RobotAppPanel.png"
+    "Images/RobotAppPanel.png",
+    "README.md",
+    "requirements.txt",
+    "AGENTS.md",
+    ".gitignore"
 ]
