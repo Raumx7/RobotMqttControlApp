@@ -732,25 +732,25 @@ ApplicationWindow {
                                 ArrowButton {
                                     x: 68; y: 0
                                     rotation: 0
-                                    onClicked: backend.send_command("A 0 100")
+                                    onClicked: backend.send_command("M 100 100")
                                 }
                                 // Right
                                 ArrowButton {
                                     x: 136; y: 68
                                     rotation: 90
-                                    onClicked: backend.send_command("A 100 0")
+                                    onClicked: backend.send_command("M 100 -100")
                                 }
                                 // Backward
                                 ArrowButton {
                                     x: 68; y: 136
                                     rotation: 180
-                                    onClicked: backend.send_command("A 0 -100")
+                                    onClicked: backend.send_command("M -100 -100")
                                 }
                                 // Left
                                 ArrowButton {
                                     x: 0; y: 68
                                     rotation: 270
-                                    onClicked: backend.send_command("A -100 0")
+                                    onClicked: backend.send_command("M -100 100")
                                 }
 
                                 // Emergency STOP
