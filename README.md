@@ -11,6 +11,10 @@ pip install -r requirements.txt
 ```text
 python main.py
 ```
-You should now see the robot's main control panel. The connection to the MQTT broker may not be available.
+## Robot Control Panel
 
-![Control-Panel-Image](Images/RobotAppPanel.png)
+![Control-Panel-Image](Images/ControlPanel.png)
+
+## Robot Environmental Sensors Indicators
+
+![Environmental-Indicator-Image](Images/EnvironmentIndicators.png)

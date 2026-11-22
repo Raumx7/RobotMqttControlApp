@@ -26,24 +26,25 @@ ApplicationWindow {
     // Possible readings, nearest -> farthest. -1.0 is the "no reading" sentinel.
     readonly property var distLevels: [0, 2, 5, 10, 20, 30, 50, 80, 100, 120]
 
-    // Range color gradient: far (safe) -> mid (caution) -> near (danger)
-    readonly property color colFar:  "#00adb5"
-    readonly property color colMid:  "#f0b429"
-    readonly property color colNear: "#e5484d"
-    readonly property color colOff:  "#2a2f38"
-
-    function lerpColor(a, b, t) {
-        return Qt.rgba(a.r + (b.r - a.r) * t,
-                       a.g + (b.g - a.g) * t,
-                       a.b + (b.b - a.b) * t,
-                       1.0)
-    }
+    // Range band colors, indexed like distLevels (0 = nearest ... 9 = farthest):
+    // green when far, yellow at medium range, red when close.
+    readonly property color colOff: "#2a2f38"
+    readonly property var bandColors: [
+        "#e5484d",   //   0 cm (contact)  red
+        "#e5484d",   //   2 cm            red
+        "#e5484d",   //   5 cm            red
+        "#e5484d",   //  10 cm            red
+        "#f5c518",   //  20 cm            yellow
+        "#f5c518",   //  30 cm            yellow
+        "#f5c518",   //  50 cm            yellow
+        "#3fd27a",   //  80 cm            green
+        "#3fd27a",   // 100 cm            green
+        "#3fd27a"    // 120 cm            green
+    ]
 
     // Color of range band i (0 = nearest to the robot)
     function bandColor(i) {
-        var t = 1.0 - i / (distLevels.length - 1)   // 0 = far, 1 = near
-        return t < 0.5 ? lerpColor(colFar, colMid, t * 2.0)
-                       : lerpColor(colMid, colNear, (t - 0.5) * 2.0)
+        return bandColors[i]
     }
 
     // Index of the band that matches a reading, or -1 when there is no data
@@ -228,14 +229,27 @@ ApplicationWindow {
             // Left Column: Robot Schema + Status
             // =====================================================
             ColumnLayout {
+                // Fixed width: nested layouts fill horizontally by default, which would
+                // let this column steal the space from the right column.
+                Layout.fillWidth: false
                 Layout.preferredWidth: 400
+                Layout.minimumWidth: 400
+                Layout.maximumWidth: 400
                 Layout.fillHeight: true
                 spacing: 10
 
                 // ----- Robot Schema (top view, vertical) + distance ranges -----
                 Rectangle {
+                    id: schemaPanel
                     Layout.fillWidth: true
+                    Layout.fillHeight: true
                     Layout.preferredHeight: 500
+                    Layout.minimumHeight: 420
+
+                    // Fan geometry (shared by the fans canvas and the chassis size)
+                    readonly property real fanInner: 5     // gap between chassis edge and first band
+                    readonly property real fanStep: 8      // radial size of one band (thickness + spacing)
+                    readonly property real fanExtent: fanInner + fanStep * window.distLevels.length
                     color: "#1b1b22"
                     border.color: "#393e46"
                     border.width: 1
@@ -274,14 +288,12 @@ ApplicationWindow {
                             var cx = width / 2
                             var cy = height / 2
                             var halfH = chassis.height / 2
-                            var inner = 10
-                            var avail = (height - chassis.height) / 2 - 12
-                            var step = Math.max(4, Math.min(12, (avail - inner) / n))
-                            var thick = step * 0.62
-                            var span = 32 * Math.PI / 180
-                            var gap = 3.5 * Math.PI / 180
+                            var inner = schemaPanel.fanInner
+                            var step = schemaPanel.fanStep
+                            var thick = step * 0.72
+                            var span = 40 * Math.PI / 180
 
-                            // Draws one fan (two mirrored halves) centered on a chassis edge
+                            // Draws one continuous fan centered on a chassis edge
                             function drawFan(centerY, baseAngle, idx) {
                                 ctx.lineWidth = thick
                                 ctx.lineCap = "round"
@@ -292,14 +304,10 @@ ApplicationWindow {
 
                                     ctx.strokeStyle = color
                                     ctx.shadowColor = color
-                                    ctx.shadowBlur = lit ? 6 : 0
+                                    ctx.shadowBlur = lit ? 5 : 0
 
                                     ctx.beginPath()
-                                    ctx.arc(cx, centerY, r, baseAngle - span, baseAngle - gap, false)
-                                    ctx.stroke()
-
-                                    ctx.beginPath()
-                                    ctx.arc(cx, centerY, r, baseAngle + gap, baseAngle + span, false)
+                                    ctx.arc(cx, centerY, r, baseAngle - span, baseAngle + span, false)
                                     ctx.stroke()
                                 }
                                 ctx.shadowBlur = 0
@@ -314,10 +322,14 @@ ApplicationWindow {
                     Rectangle {
                         id: chassis
                         anchors.centerIn: parent
-                        width: 120
-                        height: 220
-                        radius: 40
+                        height: Math.min(320, schemaPanel.height - 2 * (schemaPanel.fanExtent + 12))
+                        width: height * 0.52
+                        radius: width * 0.34
                         color: parent.chassisColor
+
+                        // Wheel geometry derived from the chassis size
+                        readonly property real wheelH: height * 0.24
+                        readonly property real wheelY: height * 0.10
                         border.color: "#00adb5"
                         border.width: 3
 
@@ -328,7 +340,7 @@ ApplicationWindow {
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.verticalCenter: parent.verticalCenter
                             width: 2
-                            height: parent.height - 120
+                            height: parent.height - 140
                             color: "#00adb5"
                             opacity: 0.15
                         }
@@ -336,9 +348,9 @@ ApplicationWindow {
                         // ----- Wheels (along the long sides of the chassis) -----
                         // Left Front
                         Rectangle {
-                            width: 26; height: 66; radius: 8
-                            x: -13
-                            y: 24
+                            width: 28; height: parent.wheelH; radius: 8
+                            x: -14
+                            y: parent.wheelY
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -359,9 +371,9 @@ ApplicationWindow {
 
                         // Right Front
                         Rectangle {
-                            width: 26; height: 66; radius: 8
-                            x: parent.width - 13
-                            y: 24
+                            width: 28; height: parent.wheelH; radius: 8
+                            x: parent.width - 14
+                            y: parent.wheelY
                             color: backend.rightPower > 0 ? "#00adb5"
                                  : backend.rightPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -382,9 +394,9 @@ ApplicationWindow {
 
                         // Left Rear
                         Rectangle {
-                            width: 26; height: 66; radius: 8
-                            x: -13
-                            y: parent.height - 90
+                            width: 28; height: parent.wheelH; radius: 8
+                            x: -14
+                            y: parent.height - parent.wheelY - parent.wheelH
                             color: backend.leftPower > 0 ? "#00adb5"
                                  : backend.leftPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -405,9 +417,9 @@ ApplicationWindow {
 
                         // Right Rear
                         Rectangle {
-                            width: 26; height: 66; radius: 8
-                            x: parent.width - 13
-                            y: parent.height - 90
+                            width: 28; height: parent.wheelH; radius: 8
+                            x: parent.width - 14
+                            y: parent.height - parent.wheelY - parent.wheelH
                             color: backend.rightPower > 0 ? "#00adb5"
                                  : backend.rightPower < 0 ? "#d65a31"
                                  : "#3a3a45"
@@ -561,279 +573,351 @@ ApplicationWindow {
             // =====================================================
             ColumnLayout {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1000
                 Layout.fillHeight: true
                 spacing: 14
 
-                // ----- Joystick + Buttons -----
+                // ----- Joystick + Command pad (same height, each centered in its half) -----
                 RowLayout {
+                    id: padRow
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 390
-                    spacing: 24
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: 262
+                    spacing: 14
 
                     // --- Joystick ---
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                        spacing: 10
+                    // Plain Item cell: fills its half of the row; the content is centered
+                    // inside it with anchors (no dependency on the layout size -> no recursion).
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
 
-                        Text {
-                            text: "Joystick"
-                            color: "#00adb5"
-                            font.pixelSize: 16
-                            font.bold: true
-                            Layout.alignment: Qt.AlignHCenter
-                        }
+                        ColumnLayout {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            // Both pads use the same offset so their circles stay aligned
+                            y: Math.max(0, (parent.height - 258) / 2)
+                            spacing: 10
 
-                        Rectangle {
-                            id: joystickBase
-                            width: 200
-                            height: 200
-                            radius: width / 2
-                            color: "#222831"
-                            border.color: "#393e46"
-                            border.width: 4
-
-                            property real outputX: 0
-                            property real outputY: 0
-                            property int lastSentX: 0
-                            property int lastSentY: 0
-
-                            Rectangle {
-                                id: joystickStick
-                                width: 74
-                                height: 74
-                                radius: width / 2
+                            Text {
+                                text: "Joystick"
                                 color: "#00adb5"
-
-                                x: (joystickBase.width / 2) - (width / 2)
-                                y: (joystickBase.height / 2) - (height / 2)
-
-                                Behavior on x { NumberAnimation { duration: 50; easing.type: Easing.OutQuad } }
-                                Behavior on y { NumberAnimation { duration: 50; easing.type: Easing.OutQuad } }
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.alignment: Qt.AlignHCenter
                             }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                preventStealing: true
-
-                                function updateJoystickPosition(mx, my) {
-                                    const cx = joystickBase.width / 2;
-                                    const cy = joystickBase.height / 2;
-                                    const dx = mx - cx;
-                                    const dy = my - cy;
-                                    const dist = Math.sqrt(dx * dx + dy * dy);
-                                    const maxD = (joystickBase.width / 2) - (joystickStick.width / 2);
-
-                                    if (dist > maxD) {
-                                        const a = Math.atan2(dy, dx);
-                                        joystickStick.x = cx + Math.cos(a) * maxD - (joystickStick.width / 2);
-                                        joystickStick.y = cy + Math.sin(a) * maxD - (joystickStick.height / 2);
-                                        joystickBase.outputX = Math.cos(a) * 100;
-                                        joystickBase.outputY = -Math.sin(a) * 100;
-                                    } else {
-                                        joystickStick.x = mx - (joystickStick.width / 2);
-                                        joystickStick.y = my - (joystickStick.height / 2);
-                                        joystickBase.outputX = (dx / maxD) * 100;
-                                        joystickBase.outputY = -(dy / maxD) * 100;
-                                    }
-
-                                    const xi = Math.round(joystickBase.outputX);
-                                    const yi = Math.round(joystickBase.outputY);
-
-                                    if (xi !== joystickBase.lastSentX || yi !== joystickBase.lastSentY) {
-                                        joystickBase.lastSentX = xi;
-                                        joystickBase.lastSentY = yi;
-                                        backend.actualizar_joystick(xi, yi);
-                                    }
-                                }
-
-                                onPositionChanged: (m) => updateJoystickPosition(m.x, m.y)
-                                onPressed:         (m) => updateJoystickPosition(m.x, m.y)
-
-                                onReleased: {
-                                    joystickStick.x = (joystickBase.width / 2) - (joystickStick.width / 2);
-                                    joystickStick.y = (joystickBase.height / 2) - (joystickStick.height / 2);
-                                    joystickBase.outputX = 0;
-                                    joystickBase.outputY = 0;
-                                    joystickBase.lastSentX = 0;
-                                    joystickBase.lastSentY = 0;
-                                    backend.actualizar_joystick(0, 0);
-                                }
-                            }
-                        }
-
-                        Text {
-                            text: "X: " + Math.round(joystickBase.outputX) +
-                                  " | Y: " + Math.round(joystickBase.outputY)
-                            color: "white"
-                            font.pixelSize: 13
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-                    }
-
-                    // --- Command Buttons ---
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                        spacing: 10
-
-                        Text {
-                            text: "Commands"
-                            color: "#00adb5"
-                            font.pixelSize: 16
-                            font.bold: true
-                            Layout.alignment: Qt.AlignHCenter
-                        }
-
-                        // --- Direction pad: arrow buttons + emergency STOP in the center ---
-                        Rectangle {
-                            id: dpad
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth: 200
-                            Layout.preferredHeight: 200
-                            radius: 100
-                            color: "#222831"
-                            border.color: "#393e46"
-                            border.width: 4
-
-                            // Forward
-                            ArrowButton {
-                                x: 68; y: 0
-                                rotation: 0
-                                onClicked: backend.send_command("A 0 100")
-                            }
-                            // Right
-                            ArrowButton {
-                                x: 136; y: 68
-                                rotation: 90
-                                onClicked: backend.send_command("A 100 0")
-                            }
-                            // Backward
-                            ArrowButton {
-                                x: 68; y: 136
-                                rotation: 180
-                                onClicked: backend.send_command("A 0 -100")
-                            }
-                            // Left
-                            ArrowButton {
-                                x: 0; y: 68
-                                rotation: 270
-                                onClicked: backend.send_command("A -100 0")
-                            }
-
-                            // Emergency STOP
                             Rectangle {
-                                id: stopHalo
-                                anchors.centerIn: parent
-                                width: 92
-                                height: 92
-                                radius: 46
-                                color: Qt.rgba(0.9, 0.28, 0.3, stopArea.containsMouse ? 0.28 : 0.15)
-                            }
-                            Rectangle {
-                                id: stopButton
-                                anchors.centerIn: parent
-                                width: 78
-                                height: 78
-                                radius: 39
-                                color: stopArea.pressed ? "#c0353a" : "#e5484d"
-                                border.color: "#7f1d1f"
+                                id: joystickBase
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 200
+                                Layout.preferredHeight: 200
+                                width: 200
+                                height: 200
+                                radius: width / 2
+                                color: "#222831"
+                                border.color: "#393e46"
                                 border.width: 4
-                                scale: stopArea.pressed ? 0.94 : 1.0
-                                Behavior on scale { NumberAnimation { duration: 80 } }
 
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "STOP"
-                                    color: "white"
-                                    font.pixelSize: 16
-                                    font.bold: true
+                                property real outputX: 0
+                                property real outputY: 0
+                                property int lastSentX: 0
+                                property int lastSentY: 0
+
+                                Rectangle {
+                                    id: joystickStick
+                                    width: 74
+                                    height: 74
+                                    radius: width / 2
+                                    color: "#00adb5"
+
+                                    x: (joystickBase.width / 2) - (width / 2)
+                                    y: (joystickBase.height / 2) - (height / 2)
+
+                                    Behavior on x { NumberAnimation { duration: 50; easing.type: Easing.OutQuad } }
+                                    Behavior on y { NumberAnimation { duration: 50; easing.type: Easing.OutQuad } }
                                 }
 
                                 MouseArea {
-                                    id: stopArea
                                     anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: backend.send_command("X")
+                                    preventStealing: true
+
+                                    function updateJoystickPosition(mx, my) {
+                                        const cx = joystickBase.width / 2;
+                                        const cy = joystickBase.height / 2;
+                                        const dx = mx - cx;
+                                        const dy = my - cy;
+                                        const dist = Math.sqrt(dx * dx + dy * dy);
+                                        const maxD = (joystickBase.width / 2) - (joystickStick.width / 2);
+
+                                        if (dist > maxD) {
+                                            const a = Math.atan2(dy, dx);
+                                            joystickStick.x = cx + Math.cos(a) * maxD - (joystickStick.width / 2);
+                                            joystickStick.y = cy + Math.sin(a) * maxD - (joystickStick.height / 2);
+                                            joystickBase.outputX = Math.cos(a) * 100;
+                                            joystickBase.outputY = -Math.sin(a) * 100;
+                                        } else {
+                                            joystickStick.x = mx - (joystickStick.width / 2);
+                                            joystickStick.y = my - (joystickStick.height / 2);
+                                            joystickBase.outputX = (dx / maxD) * 100;
+                                            joystickBase.outputY = -(dy / maxD) * 100;
+                                        }
+
+                                        const xi = Math.round(joystickBase.outputX);
+                                        const yi = Math.round(joystickBase.outputY);
+
+                                        if (xi !== joystickBase.lastSentX || yi !== joystickBase.lastSentY) {
+                                            joystickBase.lastSentX = xi;
+                                            joystickBase.lastSentY = yi;
+                                            backend.actualizar_joystick(xi, yi);
+                                        }
+                                    }
+
+                                    onPositionChanged: (m) => updateJoystickPosition(m.x, m.y)
+                                    onPressed:         (m) => updateJoystickPosition(m.x, m.y)
+
+                                    onReleased: {
+                                        joystickStick.x = (joystickBase.width / 2) - (joystickStick.width / 2);
+                                        joystickStick.y = (joystickBase.height / 2) - (joystickStick.height / 2);
+                                        joystickBase.outputX = 0;
+                                        joystickBase.outputY = 0;
+                                        joystickBase.lastSentX = 0;
+                                        joystickBase.lastSentY = 0;
+                                        backend.actualizar_joystick(0, 0);
+                                    }
                                 }
                             }
-                        }
 
-                        // --- Autonomous routines ---
-                        RowLayout {
-                            Layout.alignment: Qt.AlignHCenter
+                            Text {
+                                text: "X: " + Math.round(joystickBase.outputX) +
+                                      " | Y: " + Math.round(joystickBase.outputY)
+                                color: "white"
+                                font.pixelSize: 13
+                                Layout.alignment: Qt.AlignHCenter
+                            }
+                        }
+                    }
+
+                    // --- D-Pad ---
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.preferredWidth: 1
+
+                        ColumnLayout {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            y: Math.max(0, (parent.height - 258) / 2)
                             spacing: 10
 
-                            Button {
-                                text: "Square Auto"
-                                Layout.preferredWidth: 160
-                                Layout.preferredHeight: 44
-                                leftPadding: 38
-                                onClicked: backend.send_command("S 100 2000 700")
-
-                                // Square icon
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 16
-                                    height: 16
-                                    radius: 2
-                                    color: "transparent"
-                                    border.width: 2
-                                    border.color: parent.palette.buttonText
-                                }
+                            Text {
+                                text: "D-Pad"
+                                color: "#00adb5"
+                                font.pixelSize: 16
+                                font.bold: true
+                                Layout.alignment: Qt.AlignHCenter
                             }
 
-                            Button {
-                                text: "Rectangle Scan"
-                                Layout.preferredWidth: 160
-                                Layout.preferredHeight: 44
-                                leftPadding: 38
-                                onClicked: backend.send_command("R 85 3000 1500 5000 800")
+                            // --- Direction pad: arrow buttons + emergency STOP in the center ---
+                            Rectangle {
+                                id: dpad
+                                Layout.alignment: Qt.AlignHCenter
+                                Layout.preferredWidth: 200
+                                Layout.preferredHeight: 200
+                                radius: 100
+                                color: "#222831"
+                                border.color: "#393e46"
+                                border.width: 4
 
-                                // Rectangle icon
+                                // Forward
+                                ArrowButton {
+                                    x: 68; y: 0
+                                    rotation: 0
+                                    onClicked: backend.send_command("A 0 100")
+                                }
+                                // Right
+                                ArrowButton {
+                                    x: 136; y: 68
+                                    rotation: 90
+                                    onClicked: backend.send_command("A 100 0")
+                                }
+                                // Backward
+                                ArrowButton {
+                                    x: 68; y: 136
+                                    rotation: 180
+                                    onClicked: backend.send_command("A 0 -100")
+                                }
+                                // Left
+                                ArrowButton {
+                                    x: 0; y: 68
+                                    rotation: 270
+                                    onClicked: backend.send_command("A -100 0")
+                                }
+
+                                // Emergency STOP
                                 Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 12
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 22
-                                    height: 14
-                                    radius: 2
-                                    color: "transparent"
-                                    border.width: 2
-                                    border.color: parent.palette.buttonText
+                                    id: stopHalo
+                                    anchors.centerIn: parent
+                                    width: 92
+                                    height: 92
+                                    radius: 46
+                                    color: Qt.rgba(0.9, 0.28, 0.3, stopArea.containsMouse ? 0.28 : 0.15)
+                                }
+                                Rectangle {
+                                    id: stopButton
+                                    anchors.centerIn: parent
+                                    width: 78
+                                    height: 78
+                                    radius: 39
+                                    color: stopArea.pressed ? "#c0353a" : "#e5484d"
+                                    border.color: "#7f1d1f"
+                                    border.width: 4
+                                    scale: stopArea.pressed ? 0.94 : 1.0
+                                    Behavior on scale { NumberAnimation { duration: 80 } }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "STOP"
+                                        color: "white"
+                                        font.pixelSize: 16
+                                        font.bold: true
+                                    }
+
+                                    MouseArea {
+                                        id: stopArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onClicked: backend.send_command("X")
+                                    }
                                 }
                             }
                         }
+                    }
+                }
 
-                        // --- Brake Mode ---
-                        Text {
-                            text: "Brake Mode"
-                            color: "#00adb5"
-                            font.pixelSize: 13
-                            font.bold: true
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.topMargin: 4
-                        }
+                // ----- Grouped sections: Autonomous routines + Brake Mode -----
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 14
 
-                        RowLayout {
-                            Layout.alignment: Qt.AlignHCenter
-                            spacing: 10
+                    // --- Autonomous routines ---
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 96
+                        color: "#1b1b22"
+                        border.color: "#393e46"
+                        border.width: 1
+                        radius: 10
 
-                            Button {
-                                text: "Coast"
-                                Layout.preferredWidth: 110
-                                Layout.preferredHeight: 40
-                                checkable: true
-                                checked: backend.brakeMode === "coast"
-                                onClicked: backend.set_brake_mode("coast")
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+
+                            Text {
+                                text: "Autonomous routines"
+                                color: "#00adb5"
+                                font.pixelSize: 14
+                                font.bold: true
                             }
-                            Button {
-                                text: "Brake"
-                                Layout.preferredWidth: 110
-                                Layout.preferredHeight: 40
-                                checkable: true
-                                checked: backend.brakeMode === "brake"
-                                onClicked: backend.set_brake_mode("brake")
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                Button {
+                                    text: "Square Auto"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    Layout.minimumWidth: 130
+                                    Layout.preferredHeight: 44
+                                    leftPadding: 38
+                                    onClicked: backend.send_command("S 100 2000 700")
+
+                                    // Square icon
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 14
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 16
+                                        height: 16
+                                        radius: 2
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: parent.palette.buttonText
+                                    }
+                                }
+
+                                Button {
+                                    text: "Rectangle Scan"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    Layout.minimumWidth: 130
+                                    Layout.preferredHeight: 44
+                                    leftPadding: 38
+                                    onClicked: backend.send_command("R 85 3000 1500 5000 800")
+
+                                    // Rectangle icon
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 12
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: 22
+                                        height: 14
+                                        radius: 2
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: parent.palette.buttonText
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Brake Mode ---
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 96
+                        color: "#1b1b22"
+                        border.color: "#393e46"
+                        border.width: 1
+                        radius: 10
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+
+                            Text {
+                                text: "Brake Mode"
+                                color: "#00adb5"
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                Button {
+                                    text: "Coast"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    Layout.preferredHeight: 44
+                                    checkable: true
+                                    checked: backend.brakeMode === "coast"
+                                    onClicked: backend.set_brake_mode("coast")
+                                }
+                                Button {
+                                    text: "Brake"
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    Layout.preferredHeight: 44
+                                    checkable: true
+                                    checked: backend.brakeMode === "brake"
+                                    onClicked: backend.set_brake_mode("brake")
+                                }
                             }
                         }
                     }
