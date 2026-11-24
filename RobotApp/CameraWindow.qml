@@ -14,7 +14,7 @@ ApplicationWindow {
 
     background: Rectangle { color: "#141419" }
 
-    // Activa o detiene el hilo de lectura de cámara al abrir/cerrar la ventana
+    // Activa o detiene el hilo de lectura de cámara (y el seguimiento) al abrir/cerrar la ventana
     onVisibleChanged: {
         backend.set_camera_active(visible)
     }
@@ -67,7 +67,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: "#0d0d11"
-            border.color: "#393e46"
+            border.color: backend.autoFollowEnabled ? "#b388ff" : "#393e46"
             border.width: 2
             radius: 8
             clip: true
@@ -78,7 +78,7 @@ ApplicationWindow {
                 anchors.margins: 4
                 fillMode: Image.PreserveAspectFit
                 cache: false
-                smooth: false // Mantiene nitidez en resolución 160x120
+                smooth: false
                 source: "image://camera/frame?0"
 
                 property int frameCounter: 0
@@ -92,6 +92,29 @@ ApplicationWindow {
                 }
             }
 
+            // Etiqueta flotante de modo autónomo activo
+            Rectangle {
+                visible: backend.autoFollowEnabled
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: 12
+                width: autoBadgeText.width + 20
+                height: 28
+                radius: 6
+                color: "#4a2e5a"
+                border.color: "#b388ff"
+                border.width: 1
+
+                Text {
+                    id: autoBadgeText
+                    anchors.centerIn: parent
+                    text: "AUTONOMOUS FOLLOW ACTIVE"
+                    color: "#e1bee7"
+                    font.pixelSize: 11
+                    font.bold: true
+                }
+            }
+
             Text {
                 anchors.centerIn: parent
                 visible: !backend.cameraConnected
@@ -101,10 +124,10 @@ ApplicationWindow {
             }
         }
 
-        // ---------- Controles de Detección de Color ----------
+        // ---------- Controles de Detección y Seguimiento Autónomo ----------
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: hsvControls.visible ? 165 : 64
+            Layout.preferredHeight: hsvControls.visible ? 172 : 68
             color: "#1b1b22"
             border.color: "#393e46"
             border.width: 1
@@ -117,36 +140,63 @@ ApplicationWindow {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    spacing: 14
+                    spacing: 10
 
-                    // Botón principal para activar/desactivar detección
+                    // Botón 1: Activar/desactivar detección de color
                     Button {
-                        text: backend.colorDetectionEnabled ? "Color Detection: ON" : "Color Detection: OFF"
-                        Layout.preferredWidth: 210
+                        text: backend.colorDetectionEnabled ? "Detection: ON" : "Detection: OFF"
+                        Layout.preferredWidth: 145
                         Layout.preferredHeight: 38
                         highlighted: backend.colorDetectionEnabled
                         onClicked: backend.toggle_color_detection()
                     }
 
+                    // Botón 2: Activar/desactivar seguimiento autónomo del objeto azul
+                    Button {
+                        id: followBtn
+                        text: backend.autoFollowEnabled ? "Auto Follow: ON" : "Auto Follow: OFF"
+                        Layout.preferredWidth: 165
+                        Layout.preferredHeight: 38
+                        onClicked: backend.toggle_auto_follow()
+
+                        background: Rectangle {
+                            radius: 6
+                            color: backend.autoFollowEnabled
+                                   ? (followBtn.pressed ? "#5e35b1" : "#7e57c2")
+                                   : (followBtn.pressed ? "#2c2c35" : "#25252e")
+                            border.color: backend.autoFollowEnabled ? "#b388ff" : "#393e46"
+                            border.width: 1
+                        }
+
+                        contentItem: Text {
+                            text: followBtn.text
+                            color: "white"
+                            font.pixelSize: 13
+                            font.bold: backend.autoFollowEnabled
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+
                     Text {
                         text: backend.colorDetected
-                              ? "Target: BLUE DETECTED (Area: " + backend.detectedArea + ")"
-                              : "Target: Searching..."
+                              ? "BLUE (" + backend.detectedArea + " px)"
+                              : "Searching..."
                         color: backend.colorDetected ? "#2ECC71" : "#95A5A6"
                         font.pixelSize: 13
                         font.bold: true
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
                     }
-
-                    Item { Layout.fillWidth: true }
 
                     Button {
                         text: hsvControls.visible ? "Hide HSV" : "Calibrate HSV"
-                        Layout.preferredHeight: 34
+                        Layout.preferredHeight: 36
                         onClicked: hsvControls.visible = !hsvControls.visible
                     }
                 }
 
-                // Sliders HSV opcionales (reemplazan cv2.createTrackbar)
+                // Sliders HSV opcionales
                 GridLayout {
                     id: hsvControls
                     visible: false

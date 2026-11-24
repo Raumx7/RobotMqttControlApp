@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import math
+import time
 import threading
 import requests
 import numpy as np
@@ -32,12 +33,23 @@ MQTT_SUB_TELE = "robot/telemetry"
 MQTT_PUB      = "robot/command"
 CLIENT_ID     = "qt-robot-panel"
 
-# --- Camera Configuration (coincide con ESP32-CAM 160x120 RGB565) ---
-DEFAULT_CAM_URL = "http://10.38.49.44/stream"
-CAM_WIDTH       = 160
-CAM_HEIGHT      = 120
-CAM_FRAME_BYTES = CAM_WIDTH * CAM_HEIGHT * 2
-MIN_COLOR_AREA  = 150
+# --- Camera & Autonomous Follow Configuration ---
+DEFAULT_CAM_URL       = "http://10.38.49.44/stream"
+CAM_WIDTH             = 160
+CAM_HEIGHT            = 120
+CAM_FRAME_BYTES       = CAM_WIDTH * CAM_HEIGHT * 2
+MIN_COLOR_AREA        = 150
+TARGET_COLOR_AREA     = 3500   # Area donde el robot se detiene frente al objeto
+DEADZONE_X            = 14     # Tolerancia central en pixeles para no oscilar
+
+MIN_MOTOR_POWER       = 85     # Potencia minima real para vencer la friccion de tus motores
+MAX_TURN_POWER        = 100    # Limite superior de giro [-100, 100]
+MAX_FWD_POWER         = 100    # Limite superior de avance [-100, 100]
+FOLLOW_CMD_INTERVAL   = 0.15   # Intervalo minimo (s) entre comandos MQTT
+
+# --- Proximity Auto-Stop Configuration ---
+MAX_COLLISION_RETRIES = 4      # Veces que el laser puede bloquear el avance antes de cancelar seguimiento
+SAFE_FRONT_DIST_CM    = 15.0   # Distancia frontal (cm) a la que deja de avanzar antes del limite de 10 cm
 
 
 class CameraImageProvider(QQuickImageProvider):
@@ -85,6 +97,7 @@ class Backend(QObject):
     cameraConnectedChanged = Signal(bool)
     cameraUrlChanged       = Signal(str)
     colorDetectionChanged  = Signal(bool)
+    autoFollowChanged      = Signal(bool)
     detectionResultChanged = Signal()
 
     def __init__(self, image_provider: CameraImageProvider, parent=None):
@@ -102,8 +115,8 @@ class Backend(QObject):
         self._right          = 0
         self._mode           = "manual"
         self._brake_mode     = "coast"
-        self._front_distance = 0.0
-        self._back_distance  = 0.0
+        self._front_distance = -1.0
+        self._back_distance  = -1.0
 
         # Internal telemetry
         self._temperature   = 0.0
@@ -113,16 +126,20 @@ class Backend(QObject):
         self._sensor_id     = ""
         self._has_telemetry = False
 
-        # Camera state
+        # Camera & Follow state
         self._camera_url              = DEFAULT_CAM_URL
         self._camera_active           = False
         self._camera_connected        = False
         self._color_detection_enabled = True
+        self._auto_follow_enabled     = False
         self._color_detected          = False
         self._detected_area           = 0
         self._hsv_lower               = np.array([100, 100, 50], dtype=np.uint8)
         self._hsv_upper               = np.array([130, 255, 255], dtype=np.uint8)
         self._cam_restart_event       = threading.Event()
+        self._last_follow_cmd         = ""
+        self._last_follow_time        = 0.0
+        self._collision_count         = 0
 
         # Synchronization
         self._stop_event      = threading.Event()
@@ -153,7 +170,7 @@ class Backend(QObject):
         self._camera_thread.start()
 
     # ------------------------------------------------------------------
-    # Camera Stream & OpenCV Color Processing
+    # Camera Stream & OpenCV Color Follow Processing
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -178,6 +195,65 @@ class Backend(QObject):
         b = (rgb565 & 0x1F) * 255 // 31
         return np.dstack((b, g, r)).astype(np.uint8)
 
+    def _compute_follow_command(self, cx: int, area: float) -> str:
+        """Convierte centroide y area en 'A <x> <y>' respetando potencia minima y proximidad."""
+        center_x = CAM_WIDTH / 2.0
+        error_x = cx - center_x
+
+        # 1. Calcular giro (X): 0 si esta centrado, o entre 85 y 100 segun la desviacion
+        if abs(error_x) <= DEADZONE_X:
+            x_power = 0
+        else:
+            norm_x = (abs(error_x) - DEADZONE_X) / (center_x - DEADZONE_X)
+            mag_x = int(np.clip(
+                MIN_MOTOR_POWER + norm_x * (MAX_TURN_POWER - MIN_MOTOR_POWER),
+                MIN_MOTOR_POWER,
+                MAX_TURN_POWER
+            ))
+            x_power = mag_x if error_x > 0 else -mag_x
+
+        # 2. Calcular avance (Y): 0 si ya esta cerca o si el laser frontal detecta obstaculo
+        obstacle_ahead = (0.0 <= self._front_distance <= SAFE_FRONT_DIST_CM)
+
+        if area >= TARGET_COLOR_AREA or obstacle_ahead:
+            y_power = 0
+        else:
+            dist_factor = 1.0 - (area / TARGET_COLOR_AREA)
+            y_power = int(np.clip(
+                MIN_MOTOR_POWER + dist_factor * (MAX_FWD_POWER - MIN_MOTOR_POWER),
+                MIN_MOTOR_POWER,
+                MAX_FWD_POWER
+            ))
+
+        return f"A {x_power} {y_power}"
+
+    def _send_follow_command(self, cmd: str, force: bool = False):
+        """Encola el comando de seguimiento respetando el intervalo MQTT y evitando 'X' repetidos."""
+        if cmd == "X" and self._last_follow_cmd == "X" and not force:
+            return
+
+        now = time.monotonic()
+        if force or (now - self._last_follow_time >= FOLLOW_CMD_INTERVAL):
+            self._last_follow_cmd = cmd
+            self._last_follow_time = now
+            self._enqueue(cmd)
+
+    def _cancel_auto_follow_due_to_obstacle(self):
+        """Detiene el seguimiento autonomo tras varios bloqueos del sensor de proximidad."""
+        if not self._auto_follow_enabled:
+            return
+
+        self._auto_follow_enabled = False
+        self._collision_count = 0
+        self.autoFollowChanged.emit(False)
+        self._send_follow_command("X", force=True)
+
+        msg = '{"success":false,"error":"AutoFollow stopped: proximity limit reached"}'
+        print(f"[FOLLOW] {msg}")
+        self._responses.insert(0, msg)
+        del self._responses[self._max_responses:]
+        self.responsesChanged.emit()
+
     def _set_cam_connected(self, state: bool):
         if self._camera_connected != state:
             self._camera_connected = state
@@ -185,6 +261,7 @@ class Backend(QObject):
 
     def _camera_worker(self):
         kernel = np.ones((3, 3), np.uint8)
+        cx_ref = CAM_WIDTH // 2
 
         while not self._stop_event.is_set():
             if not self._camera_active:
@@ -238,7 +315,10 @@ class Backend(QObject):
 
                     frame = self._rgb565_to_bgr(data)
 
-                    # Procesamiento de color solo si está activado
+                    # Linea guia central cuando esta activo el seguimiento autonomo
+                    if self._auto_follow_enabled:
+                        cv2.line(frame, (cx_ref, 0), (cx_ref, CAM_HEIGHT), (180, 120, 255), 1)
+
                     detected = False
                     area_val = 0
 
@@ -254,20 +334,38 @@ class Backend(QObject):
                             largest = max(contours, key=cv2.contourArea)
                             area = cv2.contourArea(largest)
                             if area > MIN_COLOR_AREA:
-                                detected = True
-                                area_val = int(area)
-                                x, y, w, h = cv2.boundingRect(largest)
-                                cv2.drawContours(frame, [largest], -1, (0, 255, 0), 2)
-                                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
-                                cv2.putText(
-                                    frame,
-                                    f"Blue: {area_val}",
-                                    (x, max(y - 4, 10)),
-                                    cv2.FONT_HERSHEY_SIMPLEX,
-                                    0.38,
-                                    (0, 255, 255),
-                                    1
-                                )
+                                M = cv2.moments(largest)
+                                if M["m00"] > 0:
+                                    detected = True
+                                    area_val = int(area)
+                                    cx = int(M["m10"] / M["m00"])
+                                    cy = int(M["m01"] / M["m00"])
+
+                                    x, y, w, h = cv2.boundingRect(largest)
+                                    cv2.drawContours(frame, [largest], -1, (0, 255, 0), 2)
+                                    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                                    cv2.circle(frame, (cx, cy), 4, (0, 255, 255), -1)
+
+                                    if self._auto_follow_enabled:
+                                        cmd = self._compute_follow_command(cx, area)
+                                        self._send_follow_command(cmd)
+                                        label = f"{cmd} ({area_val})"
+                                    else:
+                                        label = f"Blue: {area_val}"
+
+                                    cv2.putText(
+                                        frame,
+                                        label,
+                                        (x, max(y - 4, 10)),
+                                        cv2.FONT_HERSHEY_SIMPLEX,
+                                        0.38,
+                                        (0, 255, 255),
+                                        1
+                                    )
+
+                    # Si el modo autonomo esta encendido pero no hay objeto azul, detener robot
+                    if self._auto_follow_enabled and not detected:
+                        self._send_follow_command("X")
 
                     if detected != self._color_detected or abs(area_val - self._detected_area) > 15:
                         self._color_detected = detected
@@ -281,6 +379,8 @@ class Backend(QObject):
             except Exception as e:
                 print(f"[CAM] Stream error: {e}")
                 self._set_cam_connected(False)
+                if self._auto_follow_enabled:
+                    self._send_follow_command("X", force=True)
                 if self._camera_active and not self._stop_event.is_set():
                     self._stop_event.wait(2.0)
             finally:
@@ -311,6 +411,12 @@ class Backend(QObject):
             self._stop_event.wait(1.0)
 
     def stop(self):
+        if self._auto_follow_enabled:
+            self._auto_follow_enabled = False
+            try:
+                self._client.publish(MQTT_PUB, "X")
+            except Exception:
+                pass
         self._camera_active = False
         self._stop_event.set()
         try:
@@ -446,6 +552,16 @@ class Backend(QObject):
         del self._responses[self._max_responses:]
         self.responsesChanged.emit()
 
+        # Monitorear rechazos por colision durante el seguimiento autonomo
+        if self._auto_follow_enabled and isinstance(parsed, dict):
+            if parsed.get("success") is False and parsed.get("error") == "CollisionDetected":
+                self._collision_count += 1
+                print(f"[FOLLOW] Collision blocked ({self._collision_count}/{MAX_COLLISION_RETRIES})")
+                if self._collision_count >= MAX_COLLISION_RETRIES:
+                    self._cancel_auto_follow_due_to_obstacle()
+            elif parsed.get("success") is True:
+                self._collision_count = 0
+
     # ------------------------------------------------------------------
     # QML Properties
     # ------------------------------------------------------------------
@@ -504,6 +620,9 @@ class Backend(QObject):
     @Property(bool, notify=colorDetectionChanged)
     def colorDetectionEnabled(self): return self._color_detection_enabled
 
+    @Property(bool, notify=autoFollowChanged)
+    def autoFollowEnabled(self): return self._auto_follow_enabled
+
     @Property(bool, notify=detectionResultChanged)
     def colorDetected(self): return self._color_detected
 
@@ -518,6 +637,11 @@ class Backend(QObject):
     def set_camera_active(self, active: bool):
         self._camera_active = active
         if not active:
+            if self._auto_follow_enabled:
+                self._auto_follow_enabled = False
+                self._collision_count = 0
+                self.autoFollowChanged.emit(False)
+                self._send_follow_command("X", force=True)
             self._color_detected = False
             self._detected_area = 0
             self.detectionResultChanged.emit()
@@ -534,10 +658,30 @@ class Backend(QObject):
     def toggle_color_detection(self):
         self._color_detection_enabled = not self._color_detection_enabled
         if not self._color_detection_enabled:
+            if self._auto_follow_enabled:
+                self._auto_follow_enabled = False
+                self._collision_count = 0
+                self.autoFollowChanged.emit(False)
+                self._send_follow_command("X", force=True)
             self._color_detected = False
             self._detected_area = 0
             self.detectionResultChanged.emit()
         self.colorDetectionChanged.emit(self._color_detection_enabled)
+
+    @Slot()
+    def toggle_auto_follow(self):
+        self._auto_follow_enabled = not self._auto_follow_enabled
+        self._collision_count = 0
+        if self._auto_follow_enabled:
+            if not self._color_detection_enabled:
+                self._color_detection_enabled = True
+                self.colorDetectionChanged.emit(True)
+            self._last_follow_cmd = ""
+            print("[FOLLOW] Autonomous blue tracking ENABLED")
+        else:
+            print("[FOLLOW] Autonomous blue tracking DISABLED -> Sending STOP")
+            self._send_follow_command("X", force=True)
+        self.autoFollowChanged.emit(self._auto_follow_enabled)
 
     @Slot(int, int, int, int)
     def set_hsv_bounds(self, h_min: int, h_max: int, s_min: int, v_min: int):
@@ -558,11 +702,19 @@ class Backend(QObject):
     def send_command(self, command: str):
         if not command:
             return
+        if self._auto_follow_enabled:
+            self._auto_follow_enabled = False
+            self._collision_count = 0
+            self.autoFollowChanged.emit(False)
         print(f"[TX] {command}")
         self._enqueue(command)
 
     @Slot(float, float)
     def actualizar_joystick(self, x, y):
+        if self._auto_follow_enabled:
+            self._auto_follow_enabled = False
+            self._collision_count = 0
+            self.autoFollowChanged.emit(False)
         xi = int(round(x))
         yi = int(round(y))
         cmd = f"A {xi} {yi}"
